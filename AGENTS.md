@@ -11,7 +11,7 @@ LlamaIndex 课程（lab-llamaindex）的约定。改这个仓库前先读本文�
 
 ## 二、信息架构
 
-- **左侧菜单 = 主线课**，顺序见 `docs/curriculum.md`（12 课）。
+- **左侧菜单 = 主线课**，顺序见 `docs/curriculum.md`（10 课）。
 - 每课页 = 跟做步骤 + 知识点 + 文件 + 代码 + 右侧官方文档（`docLinks`），可选「延伸阅读」弹窗。
 - 每课有两个标题字段：`title`（页内 h1，完整、可带「：说明」）与 `menuTitle`（左侧菜单，短名）。**两个都必填**。
 - **验收写法**：2～3 行**陈述句** —— ① 怎么跑（哪条命令）；② 跑完能看到什么。不写问句、不写检查清单。
@@ -25,6 +25,13 @@ LlamaIndex 课程（lab-llamaindex）的约定。改这个仓库前先读本文�
 4. **文档没写的、或与实际不符的**：先问用户，不要自己跑命令试探、也不要写进课里当事实。
 5. **没实测过的不要写成事实**：确认过的才写进步骤说明，未验证的在课里标「待验证」，并同步进 `README.md` 待办。
 6. **改 `lib/projects.ts` 前先 `git diff` 或重读文件**：整段替换会**静默覆盖**别人的改动。
+
+### 出处制（写任何 API 前先过这一关）
+
+7. **每个类名 / 方法 / 参数 / 导入路径都要能指出处**：官方文档 URL，或本机包里的源码位置（`uv run python -c "import llama_index.core; print(llama_index.core.__file__)"`）。指不出来就不写进课。
+8. **查的顺序固定**：官方文档 → `site-packages` 里的真实签名 → 官方示例仓库。**不允许**把「跑一下试试」当第一手段 —— 运行是确认，不是发现。
+9. **同一个问题修两次还不对就停手**：回头确认前提（版本、包名、导入路径），不许在上面继续打补丁。
+10. **版本锚点**：动笔前记下 `uv pip show llama-index-core` 的版本写进 `README.md`；拆分包名（`llama-index-retrievers-bm25` 这类）先确认 PyPI 上存在，**别凭记忆猜**。
 
 ## 四、知识点规则
 
@@ -54,12 +61,10 @@ VectorStoreIndex.from_documents — 把一批 Document 切块、向量化、建�
 | 4 | — | `src/basic.py` |
 | 5 | — | `src/basic.py`（加依赖 `llama-index-retrievers-bm25`） |
 | 6 | — | `src/basic.py` |
-| 7 | — | `src/basic.py` |
-| 8 | `src/ingest.py` | — |
-| 9 | `src/extract.py` | — |
-| 10 | `src/workflow.py` | — |
-| 11 | `src/agent.py` | — |
-| 12 | `src/eval.py` | — |
+| 7 | `src/extract.py`、`src/ingest.py` | — |
+| 8 | `src/workflow.py` | — |
+| 9 | `src/agent.py` | — |
+| 10 | `src/eval.py` | — |
 
 禁止每课新建项目、新建平行目录；同一能力只在同一处演进。
 
@@ -90,6 +95,6 @@ VectorStoreIndex.from_documents — 把一批 Document 切块、向量化、建�
 
 - **只改 lab-llamaindex**；`lab-ai-sdk`、`lab-langgraph`、`lab-mastra`、`lab-deepagents`、`newking` 等既有仓库禁止改动（包括「顺手优化」）。
 - 站点本身**不装课程依赖**：`package.json` 只有 `next` / `react` / `shiki` 与 Tailwind、TypeScript 工具链，不引 LlamaIndex。
-- **站点脚手架建好后，照 `lab-langgraph/scripts/audit-course.mjs` 复制一份体检脚本**；之后**改完必须跑**（交叉核对课页文案 ↔ 代码 ↔ 命令 ↔ 目录 ↔ 文档）。
+- `scripts/audit-course.mjs` 已就位：**改完必须跑**（交叉核对课页文案 ↔ 代码 ↔ 命令 ↔ 目录 ↔ 文档）。
 - 改前先说明；改完列出文件清单。
 - 不主动 commit / push。

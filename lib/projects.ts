@@ -745,88 +745,26 @@ print("汇总版：", summary.synthesize(question, nodes=retriever.retrieve(ques
   },
   {
     kind: "project",
-    slug: "query-transforms-and-router",
-    title: "查询理解与路由：不同问题走不同路",
-    menuTitle: "查询与路由",
-    summary:
-      "问题本身可能不适合直接拿去检索：太短、术语不同、或者根本属于另一类语料。这一课加两个手段：改写问题、以及按类型选引擎。",
-    verify: {
-      label: "跑脚本看结果",
-      description: [
-        "在 my-llamaindex-app 目录执行 uv run python -m src.basic",
-        "打印出改写后的查询与路由选择结果，两类问题分别落到不同引擎",
-      ],
-    },
-    concepts: [
-      { text: "`HyDEQueryTransform` — 先让模型写一段假设答案，再用它去检索" },
-      { text: "`RouterQueryEngine` — 按问题类型在多个引擎之间选择" },
-      { text: "`LLMSingleSelector` — 让模型从候选里挑一个引擎" },
-      { text: "`include_original` — 改写之后是否连同原问题一起检索" },
-    ],
-    files: [
-      {
-        path: "src/basic.py",
-        order: 1,
-        action: "replace",
-        hint: "覆盖成两段：先用 HyDE 改写查询，再用路由把两类问题分开处理。",
-        code: `from src import settings  # noqa: F401
-from llama_index.core import SimpleDirectoryReader, VectorStoreIndex
-from llama_index.core.node_parser import SentenceSplitter
-from llama_index.core.query_engine import RouterQueryEngine, TransformQueryEngine
-from llama_index.core.selectors import LLMSingleSelector
-
-documents = SimpleDirectoryReader("content").load_data()
-nodes = SentenceSplitter(chunk_size=512, chunk_overlap=64).get_nodes_from_documents(documents)
-index = VectorStoreIndex(nodes)
-base_engine = index.as_query_engine()
-
-# ① HyDE：先写假设答案，再用它检索 —— 短问题、术语不一致时有效
-hyde = TransformQueryEngine(base_engine, HyDEQueryTransform(include_original=True))
-print("HyDE 改写后：", hyde.query("HNSW 是干嘛的"))
-
-# ② 路由：按问题类型在两个引擎之间选一个
-#    这里两个引擎共用同一个索引，真实项目里通常是不同语料各建一份
-router = RouterQueryEngine(
-    selector=LLMSingleSelector.from_defaults(),
-    query_engine_tools=[
-        QueryEngineTool.from_defaults(query_engine=base_engine, description="站点内容问答"),
-        QueryEngineTool.from_defaults(query_engine=base_engine, description="概念解释"),
-    ],
-)
-print("路由结果：", router.query("对比两篇讲切块的文章"))
-`,
-      },
-    ],
-    docLinks: [
-      {
-        title: "查询变换",
-        href: "https://docs.llamaindex.ai/en/stable/optimizing/advanced_retrieval/query_transformations/",
-      },
-      {
-        title: "路由查询引擎",
-        href: "https://docs.llamaindex.ai/en/stable/module_guides/querying/router/",
-      },
-    ],
-  },
-  {
-    kind: "project",
     slug: "ingestion-pipeline",
-    title: "入库流水线：增量、去重、落库",
+    title: "入库流水线：抽取、切块与落库",
     menuTitle: "入库流水线",
     summary:
-      "前七课每次都在重建索引，这在真实语料上不可接受。这一课把「读 → 切 → 向量化 → 入库」变成可重跑、可增量的流水线，并落到 Postgres。",
+      "两件事串成一条链：入库前先把正文抽成字段，再把「读 → 抽 → 切 → 向量化 → 落库」做成可重跑、可增量的流水线，最终落到 Postgres。",
     install: {
       command: "uv add llama-index-vector-stores-postgres",
       description: "在 my-llamaindex-app 目录执行，装上 Postgres + pgvector 的向量库适配。",
     },
     verify: {
-      label: "跑脚本看结果",
+      label: "跑两个脚本看结果",
       description: [
-        "在 my-llamaindex-app 目录执行 uv run python -m src.ingest",
-        "第一次打印处理了多少篇，第二次改一篇 md 后重跑，只重新处理了那一篇",
+        "在 my-llamaindex-app 目录执行 uv run python -m src.extract，逐篇打印抽到的标题与标签",
+        "再执行 uv run python -m src.ingest：第一次打印处理了多少块；改一篇 md 后重跑，只有那一篇被重新处理",
       ],
     },
     concepts: [
+      { text: "`BaseModel` — Pydantic 模型：定义要抽哪些字段、字段什么类型" },
+      { text: "`structured_predict` — 按模型定义让 LLM 直接产出结构化结果" },
+      { text: "`as_structured_llm` — 把普通模型包装成结构化输出模型" },
       { text: "`IngestionPipeline` — 把切块与向量化串成可重跑的流水线" },
       { text: "`docstore` — 记录已处理文档的指纹，未变就跳过（增量的关键）" },
       { text: "`PGVectorStore` — Postgres 加 pgvector 的向量库，跨进程持久" },
@@ -834,21 +772,65 @@ print("路由结果：", router.query("对比两篇讲切块的文章"))
     ],
     files: [
       {
-        path: "src/ingest.py",
+        path: "src/extract.py",
         order: 1,
         action: "create",
-        hint: "入库脚本：流水线 + docstore 去重 + 落 pgvector。",
+        hint: "抽取模块：先定义要哪些字段，再写成一个函数，入库脚本直接复用。",
+        code: `from pydantic import BaseModel, Field
+
+from src import settings  # noqa: F401
+from llama_index.core import Document, SimpleDirectoryReader
+from llama_index.core.prompts import PromptTemplate
+
+PROMPT = PromptTemplate("从下面的正文里抽出结构化字段：\\n{text}")
+
+
+class DocFields(BaseModel):
+    """一篇文档要抽出来的字段。字段越少越稳，别贪多。"""
+
+    title: str = Field(description="一句话标题")
+    summary: str = Field(description="两句话以内的摘要")
+    tags: list[str] = Field(description="三到五个主题标签")
+
+
+def extract_fields(doc: Document) -> DocFields:
+    """抽字段：抽取器挂在同一个模型上，这一步只调模型，不建索引。"""
+    structured_llm = settings.Settings.llm.as_structured_llm(DocFields)
+    return structured_llm.structured_predict(DocFields, PROMPT, text=doc.text[:2000])
+
+
+if __name__ == "__main__":
+    # 单独跑：先看看这篇语料能抽出什么
+    for doc in SimpleDirectoryReader("content").load_data()[:5]:
+        fields = extract_fields(doc)
+        print(doc.metadata.get("file_name"), "→", fields.title, fields.tags)
+`,
+      },
+      {
+        path: "src/ingest.py",
+        order: 2,
+        action: "create",
+        hint: "入库脚本：先抽字段写进 metadata，再走流水线去重、向量化、落 pgvector。",
         code: `import os
 from pathlib import Path
 
 from src import settings  # noqa: F401
+from src.extract import extract_fields
 from llama_index.core import SimpleDirectoryReader, StorageContext, VectorStoreIndex
 from llama_index.core.ingestion import IngestionPipeline
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.storage.docstore import SimpleDocumentStore
 from llama_index.vector_stores.postgres import PGVectorStore
 
-# ① docstore：记住已处理文档的指纹，未变就跳过 —— 增量的关键
+# ① 先抽字段：正文变成 metadata，后面切块、入库、过滤都带着它走
+documents = SimpleDirectoryReader("content").load_data()
+for doc in documents[:5]:
+    fields = extract_fields(doc)
+    doc.metadata.update(
+        {"title": fields.title, "summary": fields.summary, "tags": fields.tags}
+    )
+
+# ② docstore：记住已处理文档的指纹，未变就跳过 —— 增量的关键
 docstore_path = Path(".storage/docstore.json")
 docstore_path.parent.mkdir(exist_ok=True)
 docstore = (
@@ -857,7 +839,7 @@ docstore = (
     else SimpleDocumentStore()
 )
 
-# ② 向量库：落 Postgres，跨进程仍在（表结构由适配器自己建）
+# ③ 向量库：落 Postgres，跨进程仍在（表结构由适配器自己建）
 vector_store = PGVectorStore.from_params(
     connection_string=os.environ["DATABASE_URL"],
     table_name="llama_chunks",
@@ -870,76 +852,14 @@ pipeline = IngestionPipeline(
     vector_store=vector_store,
 )
 
-documents = SimpleDirectoryReader("content").load_data()
 nodes = pipeline.run(documents=documents)
 print("本次处理块数：", len(nodes))
 
-# ③ 落盘索引与 docstore：下次直接加载，不用重算
+# ④ 落盘索引与 docstore：下次直接加载，不用重算
 storage_context = StorageContext.from_defaults(vector_store=vector_store, docstore=docstore)
 index = VectorStoreIndex(nodes, storage_context=storage_context)
 index.storage_context.persist(persist_dir=".storage")
 print("已落库，提问：", index.as_query_engine().query("切块粒度怎么定"))
-`,
-      },
-    ],
-    docLinks: [
-      {
-        title: "摄取流水线",
-        href: "https://docs.llamaindex.ai/en/stable/module_guides/loading/ingestion_pipeline/",
-      },
-      {
-        title: "pgvector 向量库",
-        href: "https://docs.llamaindex.ai/en/stable/examples/vector_stores/postgres/",
-      },
-    ],
-  },
-  {
-    kind: "project",
-    slug: "structured-extraction",
-    title: "结构化抽取：把正文变成字段",
-    menuTitle: "结构化抽取",
-    summary:
-      "检索之外的另一半：把非结构化正文抽成字段。抽出来的字段回写 frontmatter，前面课程的元数据过滤才真正有用。",
-    verify: {
-      label: "跑脚本看结果",
-      description: [
-        "在 my-llamaindex-app 目录执行 uv run python -m src.extract",
-        "打印出每篇文档抽到的标题、摘要与标签，字段缺失时能看出是哪一篇",
-      ],
-    },
-    concepts: [
-      { text: "`BaseModel` — Pydantic 模型：定义要抽哪些字段、字段什么类型" },
-      { text: "`structured_predict` — 按模型定义让 LLM 直接产出结构化结果" },
-      { text: "`as_structured_llm` — 把普通模型包装成结构化输出模型" },
-      { text: "`Field` — 用 description 说明字段含义，抽取质量主要靠它" },
-    ],
-    files: [
-      {
-        path: "src/extract.py",
-        order: 1,
-        action: "create",
-        hint: "抽取脚本：先用 Pydantic 定义字段，再批量抽取并回写 metadata。",
-        code: `from pydantic import BaseModel, Field
-from src import settings  # noqa: F401
-from llama_index.core import SimpleDirectoryReader
-from llama_index.core.prompts import PromptTemplate
-
-class DocFields(BaseModel):
-    """一篇文档要抽出来的字段。字段越少越稳，别贪多。"""
-    title: str = Field(description="一句话标题")
-    summary: str = Field(description="两句话以内的摘要")
-    tags: list[str] = Field(description="三到五个主题标签")
-
-prompt = PromptTemplate("从下面的正文里抽出结构化字段：\\n{text}")
-
-documents = SimpleDirectoryReader("content").load_data()
-structured_llm = settings.Settings.llm.as_structured_llm(DocFields)
-
-for doc in documents[:5]:
-    fields = structured_llm.structured_predict(DocFields, prompt, text=doc.text[:2000])
-    # 回写 metadata：第 3 课的元数据过滤就是靠这些字段
-    doc.metadata.update({"title": fields.title, "summary": fields.summary, "tags": fields.tags})
-    print(doc.metadata.get("file_name"), "→", fields.title, fields.tags)
 `,
       },
     ],
@@ -951,6 +871,14 @@ for doc in documents[:5]:
       {
         title: "抽取示例",
         href: "https://docs.llamaindex.ai/en/stable/module_guides/querying/structured_outputs/pydantic_program/",
+      },
+      {
+        title: "摄取流水线",
+        href: "https://docs.llamaindex.ai/en/stable/module_guides/loading/ingestion_pipeline/",
+      },
+      {
+        title: "pgvector 向量库",
+        href: "https://docs.llamaindex.ai/en/stable/examples/vector_stores/postgres/",
       },
     ],
   },
