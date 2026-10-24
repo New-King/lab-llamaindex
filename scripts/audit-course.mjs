@@ -187,6 +187,20 @@ for (const pkg of imported) {
   if (!installed.has(root)) W(`${pkg} 被 import，但安装命令里没出现（根包 ${root}）`);
 }
 
+// ---------- 6.5 Python 代码块里的引号必须成对 ----------
+// 历史问题：TS 模板串里写 "\n" 会被当成真换行，粘到 .py 里就是 unterminated string literal
+for (const l of lessons) {
+  for (const m of l.block.matchAll(/code: `((?:[^`\\]|\\.)*)`/g)) {
+    const code = m[1];
+    if (!/\.py|^import |^from |^# ①/.test(code) && !l.files.some((f) => f.path.endsWith(".py"))) continue;
+    code.split("\n").forEach((line, i) => {
+      // 先去掉三引号（docstring），再数剩下的双引号
+      const quotes = (line.replace(/"""/g, "").match(/"/g) ?? []).length;
+      if (quotes % 2 === 1) E(`[${l.slug}] 代码第 ${i + 1} 行双引号没闭合（TS 模板串里的 \\n 被吞了？）：${line.trim().slice(0, 40)}`);
+    });
+  }
+}
+
 // ---------- 7. 跨课引用 ----------
 for (const l of lessons)
   for (const m of l.block.matchAll(/第\s*(\d+)\s*课/g)) {

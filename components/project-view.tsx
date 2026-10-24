@@ -21,7 +21,8 @@ import {
 } from "@/lib/projects";
 
 /** 验收文案里的 shell 命令：抽出来给一个可复制的代码块 */
-const VERIFY_COMMAND = /pnpm(?:\s+[^\s，。；：、（）\u4e00-\u9fa5]+)*/;
+const VERIFY_COMMAND =
+  /\b(?:pnpm|npm|npx|yarn|bun|uv|python|pip|docker)(?:\s+[^\s，。；：、（）\u4e00-\u9fa5]+)*/;
 
 function splitVerifyLine(line: string) {
   const match = line.match(VERIFY_COMMAND);

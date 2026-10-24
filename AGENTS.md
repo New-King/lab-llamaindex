@@ -56,7 +56,7 @@ VectorStoreIndex.from_documents — 把一批 Document 切块、向量化、建�
 | 课 | 新增 | 覆盖 |
 |---|---|---|
 | 1 | `src/settings.py`、`src/basic.py` | — |
-| 2 | — | `src/basic.py` |
+| 2 | — | `src/settings.py`（加 `load_documents`）、`src/basic.py` |
 | 3 | — | `src/basic.py` |
 | 4 | — | `src/basic.py` |
 | 5 | — | `src/basic.py`（加依赖 `llama-index-retrievers-bm25`） |
@@ -74,7 +74,7 @@ VectorStoreIndex.from_documents — 把一批 Document 切块、向量化、建�
 
 - **场景**：**网站内容知识库** —— 把一批 markdown 变成可问答、带引用的知识库。语料 mock，不接真实站点、不加虚构公司与角色设定。
 - **语言固定 Python 3.12**，用 `uv` 管环境；**不混 TS 写法**（站点本身是 Next.js，但那是教程站，不是课程内容）。
-- 模型统一 **DeepSeek**（`deepseek-chat`）；嵌入统一 **硅基流动 `BAAI/bge-large-zh-v1.5`**（1024 维中文）。
+- 模型统一 **DeepSeek**（`deepseek-flash`）；嵌入统一 **硅基流动 `BAAI/bge-large-zh-v1.5`**（1024 维中文）。
   - **不换嵌入模型**：换模型 = 维度变 = 必须重灌，课程里要讲清这个代价（第 8 课）。
 - **新增依赖要写成一步**：需要装包的课在课数据里写 `install: { command, description }`，它会渲染成操作列表第一步「装依赖」。
 - 依赖只加课程真需要的包：`llama-index-core`、`llama-index-embeddings-openai-like`（或官方对应包）、`llama-index-retrievers-bm25`、`llama-index-postprocessor-*`、`llama-index-vector-stores-postgres`。**不要**引入其它 provider 或云服务。

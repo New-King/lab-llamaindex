@@ -270,13 +270,14 @@ export const INIT_STEPS: CommandStep[] = [
   },
   {
     description:
-      "装三件套：核心包、对话模型（OpenAI 兼容端点，用于 DeepSeek）、嵌入模型（OpenAI 兼容端点，用于硅基流动）。",
+      "装四件套：核心包、对话模型（OpenAI 兼容端点，用于 DeepSeek）、嵌入模型（OpenAI 兼容端点，用于硅基流动），外加读 .env.local 的 python-dotenv。",
     command:
-      "uv add llama-index-core llama-index-llms-openai-like llama-index-embeddings-openai-like",
+      "uv add llama-index-core llama-index-llms-openai-like llama-index-embeddings-openai-like python-dotenv",
   },
   {
-    description: "建语料目录：本课程的知识库来自这里的 markdown。",
-    command: "mkdir -p content",
+    description:
+      "建语料目录与四个空文件：本课程的知识库来自这里的 markdown，按类型分成 notes 与 blog 两个子目录（第 3 课按类型过滤要用）。",
+    command: `mkdir -p content/notes content/blog && touch content/notes/chunking.md content/notes/rerank.md content/blog/pgvector-hnsw.md content/blog/rag-production.md`,
   },
   {
     description: "在项目根目录创建 .env.local，填入两个 Key。",
@@ -307,9 +308,158 @@ export const NAV_ITEMS: NavItem[] = [
       },
       {
         path: ".env.local",
-        hint: "对话走 DeepSeek，嵌入走硅基流动（中文向量），两行都给上：",
+        hint: "对话走 DeepSeek，嵌入走硅基流动（中文向量）；DATABASE_URL 到落 pgvector 那课才用得上：",
         code: `DEEPSEEK_API_KEY=sk-...
-SILICONFLOW_API_KEY=sk-...`,
+SILICONFLOW_API_KEY=sk-...
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres`,
+      },
+      {
+        path: "content/notes/chunking.md",
+        hint: "语料之一：切块粒度。前四课的提问都落在这四篇里。",
+        code: `---
+title: 切块粒度怎么定
+date: 2026-03-12
+type: notes
+tags: [切块, 检索, RAG]
+---
+
+# 切块粒度怎么定
+
+## 块太大
+
+- 一个块里混进多个主题，向量被平均，语义指向变糊
+- 召回之后进 prompt 的噪声多，模型要自己挑重点
+- 同样的 top_k 覆盖到的信息量下降
+
+## 块太小
+
+- 一个论点被切成两半，单块读不通
+- 检索命中半句话，合成时缺少上下文
+- 块数量上升，写入与检索成本一起涨
+
+## 经验值
+
+中文正文先按 300–600 字起步，overlap 取块长的 10%–20%。
+
+标题、代码块、表格不要被切开：先按 markdown 结构分节，再在节内按句子切。
+`,
+      },
+      {
+        path: "content/notes/rerank.md",
+        hint: "语料之二：召回与重排的分工。",
+        code: `---
+title: 召回与重排的分工
+date: 2026-04-02
+type: notes
+tags: [重排, 召回, 向量检索]
+---
+
+# 召回与重排的分工
+
+召回看像不像，重排看能不能回答问题，两件事目的不同。
+
+## 向量召回
+
+- 查询与块各自编码，再比向量距离，速度是优势
+- 一次近邻检索就能从大量块里捞出几十条候选
+- 对「哪句话能回答问题」不敏感，专有名词与数字容易飘
+
+## 重排
+
+- 把查询与每条候选拼在一起送进模型，逐条判断相关性
+- 精度高，成本随候选数线性涨
+- 所以流程是：先宽召回 20–50 条，再精排留 3–5 条进 prompt
+
+## 阈值放在哪
+
+相似度阈值放在重排之前，用来砍掉明显无关的候选。
+
+阈值过高会把正确答案一起丢掉，先给一个保守值，看指标再动。
+`,
+      },
+      {
+        path: "content/blog/pgvector-hnsw.md",
+        hint: "语料之三：pgvector 的 HNSW 索引怎么建、怎么调参。",
+        code: `---
+title: pgvector 的 HNSW 索引怎么建
+date: 2026-05-18
+type: blog
+tags: [pgvector, HNSW, 向量库]
+---
+
+# pgvector 的 HNSW 索引怎么建
+
+pgvector 提供两种近似近邻索引：IVFFlat 与 HNSW。
+
+HNSW 建索引慢、占内存多，查询快，且不需要事先聚类，生产上更常用。
+
+## 建索引
+
+\`\`\`sql
+CREATE INDEX ON chunks USING hnsw (embedding vector_cosine_ops)
+WITH (m = 16, ef_construction = 64);
+\`\`\`
+
+- m：每个节点的邻居数，16 是常用起点，调大召回更准、内存更贵
+- ef_construction：建索引时的候选池大小，越大索引质量越好、建索引越慢
+
+## 查询时调参
+
+\`\`\`sql
+SET hnsw.ef_search = 40;
+\`\`\`
+
+ef_search 越大召回越准、延迟越高，按 top_k 的两到四倍起步。
+
+## 注意
+
+索引要在数据量大起来之前建好，批量导入后再 REINDEX 一次。
+
+向量维度由嵌入模型决定，换模型等于换维度，索引与数据都要重建。
+`,
+      },
+      {
+        path: "content/blog/rag-production.md",
+        hint: "语料之四：生产环境的 RAG 关注哪几件事。",
+        code: `---
+title: 生产环境的 RAG 要重点关注哪几件事
+date: 2026-06-30
+type: blog
+tags: [RAG, 工程化, 评测]
+---
+
+# 生产环境的 RAG 要重点关注哪几件事
+
+## 一、召回是否真的召回了
+
+把相关性分数打出来看，不要只看最终回答。
+
+召回没中就换块大小、加关键词一路、上重排，在 prompt 上打转解决不了召回问题。
+
+## 二、回答能不能指回原文
+
+每条结论都要能落到具体文件的某一块。
+
+不可审计的回答在客服、法务、运维场景里等于没有。
+
+## 三、语料更新怎么办
+
+按文档指纹去重，改一篇只重处理那一篇。
+
+嵌入模型换了维度，整库重灌。
+
+## 四、有没有数字
+
+留一批评测问题，记录命中率、MRR 与忠实度。
+
+每次改切块或重排都跑一遍，否则改动的好坏无法判断。
+
+## 五、成本与延迟
+
+重排与多轮改写都会成倍放大 token 消耗。
+
+先保证召回准，再决定要不要加这些步骤。
+`,
       },
     ],
   },
@@ -357,7 +507,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env.local")
 
 # 对话模型：DeepSeek 走 OpenAI 兼容端点
 Settings.llm = OpenAILike(
-    model="deepseek-chat",
+    model="deepseek-flash",
     api_base="https://api.deepseek.com/v1",
     api_key=os.environ["DEEPSEEK_API_KEY"],
     is_chat_model=True,
@@ -370,31 +520,31 @@ Settings.embed_model = OpenAILikeEmbedding(
     api_key=os.environ["SILICONFLOW_API_KEY"],
 )
 
-# 建完索引的提示：默认是内存向量库，进程退出即失
-Settings.chunk_size = 512
-Settings.chunk_overlap = 64`,
+# 切块默认值：用切块器自己传参时，以传的为准
+# 256 字起步：嵌入模型 bge-large-zh 的输入上限是 512 token，块加 metadata 不能顶到上限
+Settings.chunk_size = 256
+Settings.chunk_overlap = 32`,
       },
       {
         path: "src/basic.py",
         order: 2,
         action: "create",
-        hint: "最小闭环：读语料 → 建索引 → 查一次。",
-        code: `from src import settings  # noqa: F401  先配置模型与嵌入
-from llama_index.core import SimpleDirectoryReader, VectorStoreIndex
+        hint: "最小闭环，和官方 starter example 同一套：读语料 → 建索引 → 查一次。配置在上一行的 settings.py 里。",
+        code: `from src import settings  # noqa: F401  先配置模型与嵌入（DeepSeek + 硅基流动）
+from llama_index.core import Document, SimpleDirectoryReader, VectorStoreIndex
 
 # ① 读语料：content/ 下的 markdown 变成 Document
-documents = SimpleDirectoryReader("content").load_data()
-print("文档数：", len(documents))
+#    recursive=True 才会进 notes/ 与 blog/ 两个子目录（默认不递归）
+documents: list[Document] = SimpleDirectoryReader("content", recursive=True).load_data()
 
-# ② 建索引：切块 + 向量化（默认走内存向量库，重启即失）
+# ② 建索引：切块 + 向量化全在这一行（默认内存向量库，重启即失）
 index = VectorStoreIndex.from_documents(documents)
 
 # ③ 查询：先检索相关块，再交给模型合成答案
-engine = index.as_query_engine()
-response = engine.query("切块粒度为什么会影响检索质量")
-print("回答：", response)
+query_engine = index.as_query_engine()
+response = query_engine.query("切块粒度为什么会影响检索质量")
 
-# ④ 来源：合成时用到了哪些块
+print(response)
 for node in response.source_nodes:
     print("来源：", node.metadata.get("file_name"), "分数：", round(node.score or 0, 3))
 `,
@@ -428,6 +578,7 @@ for node in response.source_nodes:
     concepts: [
       {
         text: "`SentenceSplitter` — 按句子边界切块，用 chunk_size 与 chunk_overlap 控制粒度",
+        note: "上限由嵌入模型定：bge-large-zh 只有 512 token",
       },
       {
         text: "`MarkdownNodeParser` — 按 markdown 结构切块：标题分节、代码块与表格不拆开",
@@ -437,30 +588,96 @@ for node in response.source_nodes:
     ],
     files: [
       {
-        path: "src/basic.py",
+        path: "src/settings.py",
         order: 1,
+        action: "edit",
+        hint: "补一个 load_documents()：读语料时顺手把 frontmatter 拆进 metadata，后面每课都用它。",
+        code: `import os
+from pathlib import Path
+
+import yaml
+from dotenv import load_dotenv
+from llama_index.core import Settings, SimpleDirectoryReader
+from llama_index.embeddings.openai_like import OpenAILikeEmbedding
+from llama_index.llms.openai_like import OpenAILike
+
+# 读项目根的 .env.local（脚本是裸 Python 进程，没人替它读）
+load_dotenv(Path(__file__).resolve().parent.parent / ".env.local")
+
+# 对话模型：DeepSeek 走 OpenAI 兼容端点
+Settings.llm = OpenAILike(
+    model="deepseek-flash",
+    api_base="https://api.deepseek.com/v1",
+    api_key=os.environ["DEEPSEEK_API_KEY"],
+    is_chat_model=True,
+)
+
+# 嵌入模型：中文语料用中文向量（维度换掉就必须重灌索引）
+Settings.embed_model = OpenAILikeEmbedding(
+    model_name="BAAI/bge-large-zh-v1.5",
+    api_base="https://api.siliconflow.cn/v1",
+    api_key=os.environ["SILICONFLOW_API_KEY"],
+)
+
+# 切块默认值：用切块器自己传参时，以传的为准
+# 256 字起步：嵌入模型 bge-large-zh 的输入上限是 512 token，块加 metadata 不能顶到上限
+Settings.chunk_size = 256
+Settings.chunk_overlap = 32
+
+
+def load_documents():
+    """读语料，并把 frontmatter 拆进 metadata —— 后面每课都从这里进。
+
+    recursive=True：语料按类型放在 content/ 下的两个子目录里，默认不递归。
+    frontmatter 里的 title / date / type 会变成可筛字段，正文里不再留下 --- 那一段
+    （读文件时整篇都会被当成正文，frontmatter 要自己拆）。
+    """
+    # filename_as_id：文档 id 用文件路径，重跑时 id 不变，docstore 才认得出「还是那篇」
+    documents = SimpleDirectoryReader("content", recursive=True, filename_as_id=True).load_data()
+    for doc in documents:
+        if doc.text.startswith("---"):
+            _, front, body = doc.text.split("---", 2)
+            fields = yaml.safe_load(front) or {}
+            # 值统一成字符串：yaml 会把日期解析成 date 对象，落盘成 JSON 时会报错
+            doc.metadata.update(
+                {k: v if isinstance(v, (list, dict)) else str(v) for k, v in fields.items()}
+            )
+            doc.set_content(body.lstrip())
+    return documents
+`,
+      },
+      {
+        path: "src/basic.py",
+        order: 2,
         action: "replace",
-        hint: "覆盖成「先按 markdown 切节、再按句子切块」，并打印每块的元数据。",
-        code: `from src import settings  # noqa: F401
-from llama_index.core import SimpleDirectoryReader, VectorStoreIndex
+        hint: "覆盖成「先按 markdown 切节、再按句子切块」，并打印每个块的元数据。",
+        code: `from src.settings import load_documents  # 导入即完成模型与嵌入配置
+from llama_index.core import VectorStoreIndex
 from llama_index.core.node_parser import MarkdownNodeParser, SentenceSplitter
 
-documents = SimpleDirectoryReader("content").load_data()
+documents = load_documents()
 
-# ① 先按 markdown 结构切：标题分节、代码块与表格保持完整
+# ① 先看一眼：正文开头的 frontmatter 已经被摘走，metadata 里多了 title / date / type / tags
+first = documents[0]
+print("文档数：", len(documents))
+print("正文开头：", first.text[:24].replace("\\n", " "))
+print("元数据键：", list(first.metadata))
+print("其中来自 frontmatter：", {k: first.metadata.get(k) for k in ("title", "date", "type", "tags")})
+
+# ② 按 markdown 结构切：标题分节、代码块与表格保持完整
 md_parser = MarkdownNodeParser()
 sections = md_parser.get_nodes_from_documents(documents)
 
-# ② 再按句子切块：块太大召回噪声多，太小语义不完整
-splitter = SentenceSplitter(chunk_size=512, chunk_overlap=64)
+# ③ 再按句子切块：块太大召回噪声多，太小语义不完整
+splitter = SentenceSplitter(chunk_size=256, chunk_overlap=32)
 nodes = splitter.get_nodes_from_documents(sections)
 
 print("块数：", len(nodes))
 for node in nodes[:5]:
-    # metadata 里带着 frontmatter 的字段，后面可以用来过滤
-    print(len(node.text), "字", node.metadata.get("title"), node.metadata.get("date"))
+    # 每块都继承了文档的 metadata，后面可以用来过滤
+    print(" ", len(node.text), "字 |", node.metadata.get("type"), "|", node.metadata.get("title"), "|", node.text[:16].replace("\\n", " "))
 
-# ③ 用切好的块建索引：node_parser 换掉默认切块
+# ④ 用切好的块建索引：node_parser 换掉默认切块
 index = VectorStoreIndex(nodes)
 engine = index.as_query_engine()
 print("回答：", engine.query("切块粒度为什么会影响检索质量"))
@@ -503,23 +720,28 @@ print("回答：", engine.query("切块粒度为什么会影响检索质量"))
         path: "src/basic.py",
         order: 1,
         action: "replace",
-        hint: "覆盖成显式检索：先看分数，再加元数据过滤。",
-        code: `from src import settings  # noqa: F401
-from llama_index.core import SimpleDirectoryReader, VectorStoreIndex
+        hint: "覆盖成显式检索：先看分数，再加元数据过滤（过滤字段来自上一课拆出来的 frontmatter）。",
+        code: `from src.settings import load_documents  # 导入即完成模型与嵌入配置
+from llama_index.core import VectorStoreIndex
 from llama_index.core.node_parser import MarkdownNodeParser, SentenceSplitter
+from llama_index.core.schema import NodeWithScore
 from llama_index.core.vector_stores import MetadataFilter, MetadataFilters
 
-documents = SimpleDirectoryReader("content").load_data()
+documents = load_documents()
 sections = MarkdownNodeParser().get_nodes_from_documents(documents)
-nodes = SentenceSplitter(chunk_size=512, chunk_overlap=64).get_nodes_from_documents(sections)
+nodes = SentenceSplitter(chunk_size=256, chunk_overlap=32).get_nodes_from_documents(sections)
 index = VectorStoreIndex(nodes)
+
+question = "HNSW 索引怎么建"
 
 # ① 显式检索器：召回条数由 similarity_top_k 控制
 retriever = index.as_retriever(similarity_top_k=5)
 
 # ② 只看分数：NodeWithScore 把分数和节点放在一起
-for hit in retriever.retrieve("切块粒度为什么会影响检索质量"):
-    print(round(hit.score or 0, 3), hit.node.metadata.get("file_name"))
+hits: list[NodeWithScore] = retriever.retrieve(question)
+print("无过滤：")
+for hit in hits:
+    print(" ", round(hit.score or 0, 3), hit.node.metadata.get("type"), hit.node.metadata.get("file_name"))
 
 # ③ 加元数据过滤：只在某一类内容里检索，而不是检索完再筛
 filtered = index.as_retriever(
@@ -528,7 +750,9 @@ filtered = index.as_retriever(
         filters=[MetadataFilter(key="type", value="notes")],
     ),
 )
-print("过滤后命中：", len(filtered.retrieve("切块粒度怎么定")))
+print("只留 type=notes：")
+for hit in filtered.retrieve(question):
+    print(" ", round(hit.score or 0, 3), hit.node.metadata.get("type"), hit.node.metadata.get("file_name"))
 `,
       },
     ],
@@ -569,29 +793,29 @@ print("过滤后命中：", len(filtered.retrieve("切块粒度怎么定")))
         order: 1,
         action: "replace",
         hint: "覆盖成三段对比：裸召回 → 卡阈值 → 再精排。",
-        code: `from src import settings  # noqa: F401
-from llama_index.core import SimpleDirectoryReader, VectorStoreIndex
+        code: `from src.settings import load_documents  # 导入即完成模型与嵌入配置
+from llama_index.core import VectorStoreIndex
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.postprocessor import LLMRerank, SimilarityPostprocessor
 
-documents = SimpleDirectoryReader("content").load_data()
-nodes = SentenceSplitter(chunk_size=512, chunk_overlap=64).get_nodes_from_documents(documents)
+documents = load_documents()
+nodes = SentenceSplitter(chunk_size=256, chunk_overlap=32).get_nodes_from_documents(documents)
 index = VectorStoreIndex(nodes)
 retriever = index.as_retriever(similarity_top_k=8)
 question = "重排和向量召回的分工是什么"
 
-# ① 裸召回：先看基线
+# ① 裸召回：先看基线（分数是余弦相似度，0 到 1）
 base = retriever.retrieve(question)
-print("召回：", [(round(h.node.score or 0, 3)) for h in base])
+print("召回：", [(round(h.score or 0, 3), h.node.metadata.get("file_name")) for h in base])
 
-# ② 卡阈值：分数太低直接扔掉（阈值过高会误杀）
-kept = SimilarityPostprocessor(similarity_cutoff=0.6).postprocess_nodes(base, query_str=question)
-print("卡阈值后：", len(kept))
+# ② 卡阈值：分数太低直接扔掉（阈值过高会误杀正确答案）
+kept = SimilarityPostprocessor(similarity_cutoff=0.3).postprocess_nodes(base, query_str=question)
+print("卡阈值后剩：", len(kept))
 
-# ③ 再精排：模型按「能不能回答问题」重排，只留 top_n 条进 prompt
+# ③ 再精排：模型逐条判断「能不能回答问题」，score 是 1 到 10 的相对分
 ranked = LLMRerank(top_n=3).postprocess_nodes(kept, query_str=question)
 for item in ranked:
-    print(item.score, item.node.metadata.get("file_name"))
+    print("重排分：", item.score, item.node.metadata.get("file_name"))
 `,
       },
     ],
@@ -628,7 +852,9 @@ for item in ranked:
       { text: "`BM25Retriever` — 关键词检索：命中专有名词与精确串" },
       { text: "`QueryFusionRetriever` — 多路召回按排名融合，不用自己写排序" },
       { text: "`num_queries` — 一次生成几路查询，做多查询召回" },
-      { text: "`tokenizer` — 关键词检索先接中文分词器，否则中文被当成整串" },
+      {
+        text: "`token_pattern` — 关键词检索的切词正则：中文没有空格，默认会把整句当成一个词",
+      },
     ],
     files: [
       {
@@ -636,25 +862,32 @@ for item in ranked:
         order: 1,
         action: "replace",
         hint: "覆盖成「向量 + BM25 融合」：两路各自召回，再按排名融合。",
-        code: `import jieba
-from src import settings  # noqa: F401
-from llama_index.core import SimpleDirectoryReader, VectorStoreIndex
+        code: `from src.settings import load_documents  # 导入即完成模型与嵌入配置
+from llama_index.core import VectorStoreIndex
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.retrievers import QueryFusionRetriever
 from llama_index.retrievers.bm25 import BM25Retriever
 
-documents = SimpleDirectoryReader("content").load_data()
-nodes = SentenceSplitter(chunk_size=512, chunk_overlap=64).get_nodes_from_documents(documents)
+documents = load_documents()
+nodes = SentenceSplitter(chunk_size=256, chunk_overlap=32).get_nodes_from_documents(documents)
 index = VectorStoreIndex(nodes)
 
 # ① 语义路：向量检索
 vector_retriever = index.as_retriever(similarity_top_k=4)
 
-# ② 关键词路：BM25 要先用分词器切中文
-BM25Retriever.tokenizer = jieba.lcut
-keyword_retriever = BM25Retriever.from_defaults(nodes=nodes, similarity_top_k=4)
+# ② 关键词路：中文没有空格，默认正则会把整句当成一个词，
+#    这里把切词规则换成「中文按字、英文按词」
+keyword_retriever = BM25Retriever.from_defaults(
+    nodes=nodes,
+    similarity_top_k=4,
+    token_pattern=r"(?u)[\\u4e00-\\u9fa5]|\\b\\w+\\b",
+)
 
-# ③ 融合：RLF 按排名（不是分数）合并两路
+question = "pgvector 的 HNSW 索引怎么建"
+print("向量路：", [h.node.metadata.get("file_name") for h in vector_retriever.retrieve(question)])
+print("关键词路：", [h.node.metadata.get("file_name") for h in keyword_retriever.retrieve(question)])
+
+# ③ 融合：RRF 按排名（不是分数）合并两路
 fusion = QueryFusionRetriever(
     retrievers=[vector_retriever, keyword_retriever],
     similarity_top_k=4,
@@ -662,9 +895,9 @@ fusion = QueryFusionRetriever(
     mode="reciprocal_rerank",
     use_async=False,
 )
-question = "pgvector 的 HNSW 索引怎么建"
+print("融合后：")
 for hit in fusion.retrieve(question):
-    print(round(hit.score or 0, 3), hit.node.metadata.get("file_name"), hit.node.text[:32])
+    print(" ", round(hit.score or 0, 3), hit.node.metadata.get("file_name"))
 `,
       },
     ],
@@ -705,13 +938,13 @@ for hit in fusion.retrieve(question):
         order: 1,
         action: "replace",
         hint: "覆盖成带引用的回答：自己拼编号，并对比三种合成方式。",
-        code: `from src import settings  # noqa: F401
-from llama_index.core import SimpleDirectoryReader, VectorStoreIndex
+        code: `from src.settings import load_documents  # 导入即完成模型与嵌入配置
+from llama_index.core import VectorStoreIndex
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.response_synthesizers import get_response_synthesizer
 
-documents = SimpleDirectoryReader("content").load_data()
-nodes = SentenceSplitter(chunk_size=512, chunk_overlap=64).get_nodes_from_documents(documents)
+documents = load_documents()
+nodes = SentenceSplitter(chunk_size=256, chunk_overlap=32).get_nodes_from_documents(documents)
 index = VectorStoreIndex(nodes)
 retriever = index.as_retriever(similarity_top_k=4)
 question = "生产环境的 RAG 要重点关注哪几件事"
@@ -765,7 +998,8 @@ print("汇总版：", summary.synthesize(question, nodes=retriever.retrieve(ques
       { text: "`BaseModel` — Pydantic 模型：定义要抽哪些字段、字段什么类型" },
       { text: "`structured_predict` — 按模型定义让 LLM 直接产出结构化结果" },
       { text: "`as_structured_llm` — 把普通模型包装成结构化输出模型" },
-      { text: "`IngestionPipeline` — 把切块与向量化串成可重跑的流水线" },
+      { text: "`TransformComponent` — 自定义流水线步骤：接一批节点、处理完再交回去" },
+      { text: "`IngestionPipeline` — 把抽取、切块与向量化串成可重跑的流水线" },
       { text: "`docstore` — 记录已处理文档的指纹，未变就跳过（增量的关键）" },
       { text: "`PGVectorStore` — Postgres 加 pgvector 的向量库，跨进程持久" },
       { text: "`persist` — 把索引与 docstore 落盘，下次直接加载" },
@@ -775,12 +1009,13 @@ print("汇总版：", summary.synthesize(question, nodes=retriever.retrieve(ques
         path: "src/extract.py",
         order: 1,
         action: "create",
-        hint: "抽取模块：先定义要哪些字段，再写成一个函数，入库脚本直接复用。",
+        hint: "抽取模块：先定义要哪些字段，再包成流水线的一步，入库脚本直接复用。",
         code: `from pydantic import BaseModel, Field
 
-from src import settings  # noqa: F401
-from llama_index.core import Document, SimpleDirectoryReader
+from src.settings import load_documents  # 导入即完成模型与嵌入配置
+from llama_index.core import Document, Settings
 from llama_index.core.prompts import PromptTemplate
+from llama_index.core.schema import TransformComponent
 
 PROMPT = PromptTemplate("从下面的正文里抽出结构化字段：\\n{text}")
 
@@ -794,14 +1029,46 @@ class DocFields(BaseModel):
 
 
 def extract_fields(doc: Document) -> DocFields:
-    """抽字段：抽取器挂在同一个模型上，这一步只调模型，不建索引。"""
-    structured_llm = settings.Settings.llm.as_structured_llm(DocFields)
+    """抽字段：抽取器挂在同一个模型上，这一步只调模型，不建索引。
+
+    is_function_calling_model 默认是关的，as_structured_llm 走「提示词里要 JSON、
+    再解析」这条路 —— 对 deepseek-flash 这种 thinking 模型，比强制工具调用稳。
+    """
+    structured_llm = Settings.llm.as_structured_llm(DocFields)
     return structured_llm.structured_predict(DocFields, PROMPT, text=doc.text[:2000])
 
 
+class FieldExtractor(TransformComponent):
+    """流水线的第一步：抽字段写进新文档的 metadata。
+
+    返回新对象而不是原地改：原文档的 hash 保持不动，
+    下一次运行才判断得出「这篇正文变没变」，增量才有依据。
+    """
+
+    def __call__(self, nodes, **kwargs):
+        extracted = []
+        for node in nodes:
+            fields = extract_fields(node)
+            extracted.append(
+                Document(
+                    text=node.text,
+                    metadata={
+                        **node.metadata,
+                        "title": fields.title,
+                        "summary": fields.summary,
+                        "tags": fields.tags,
+                    },
+                    # 抽出来的字段只用来筛和展示：不参与切块预算，也不塞进嵌入文本
+                    excluded_embed_metadata_keys=["title", "summary", "tags"],
+                    excluded_llm_metadata_keys=["title", "summary", "tags"],
+                )
+            )
+        return extracted
+
+
 if __name__ == "__main__":
-    # 单独跑：先看看这篇语料能抽出什么
-    for doc in SimpleDirectoryReader("content").load_data()[:5]:
+    # 单独跑：先看看每篇语料能抽出什么
+    for doc in load_documents():
         fields = extract_fields(doc)
         print(doc.metadata.get("file_name"), "→", fields.title, fields.tags)
 `,
@@ -810,25 +1077,20 @@ if __name__ == "__main__":
         path: "src/ingest.py",
         order: 2,
         action: "create",
-        hint: "入库脚本：先抽字段写进 metadata，再走流水线去重、向量化、落 pgvector。",
+        hint: "入库脚本：抽字段、切块、向量化串成一条流水线，靠 docstore 跳过没变的文档，最后落 pgvector。",
         code: `import os
 from pathlib import Path
 
-from src import settings  # noqa: F401
-from src.extract import extract_fields
-from llama_index.core import SimpleDirectoryReader, StorageContext, VectorStoreIndex
+from src.extract import FieldExtractor
+from src.settings import load_documents  # 导入即完成模型与嵌入配置
+from llama_index.core import StorageContext, VectorStoreIndex
 from llama_index.core.ingestion import IngestionPipeline
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.storage.docstore import SimpleDocumentStore
 from llama_index.vector_stores.postgres import PGVectorStore
 
-# ① 先抽字段：正文变成 metadata，后面切块、入库、过滤都带着它走
-documents = SimpleDirectoryReader("content").load_data()
-for doc in documents[:5]:
-    fields = extract_fields(doc)
-    doc.metadata.update(
-        {"title": fields.title, "summary": fields.summary, "tags": fields.tags}
-    )
+# ① 语料：正文 + frontmatter 元数据
+documents = load_documents()
 
 # ② docstore：记住已处理文档的指纹，未变就跳过 —— 增量的关键
 docstore_path = Path(".storage/docstore.json")
@@ -846,8 +1108,12 @@ vector_store = PGVectorStore.from_params(
     embed_dim=1024,
 )
 
+# ④ 流水线：抽字段 → 切块 → 向量化；docstore 里指纹没变的文档整条跳过
 pipeline = IngestionPipeline(
-    transformations=[SentenceSplitter(chunk_size=512, chunk_overlap=64)],
+    transformations=[
+        FieldExtractor(),
+        SentenceSplitter(chunk_size=256, chunk_overlap=32),
+    ],
     docstore=docstore,
     vector_store=vector_store,
 )
@@ -910,8 +1176,8 @@ print("已落库，提问：", index.as_query_engine().query("切块粒度怎么
         hint: "事件驱动流程：先检索一次，不够就改写查询再检索，最后合成。",
         code: `import asyncio
 
-from src import settings  # noqa: F401
-from llama_index.core import SimpleDirectoryReader, VectorStoreIndex
+from src.settings import load_documents  # 导入即完成模型与嵌入配置
+from llama_index.core import VectorStoreIndex
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.workflow import (
     Event,
@@ -921,8 +1187,8 @@ from llama_index.core.workflow import (
     step,
 )
 
-documents = SimpleDirectoryReader("content").load_data()
-nodes = SentenceSplitter(chunk_size=512, chunk_overlap=64).get_nodes_from_documents(documents)
+documents = load_documents()
+nodes = SentenceSplitter(chunk_size=256, chunk_overlap=32).get_nodes_from_documents(documents)
 index = VectorStoreIndex(nodes)
 retriever = index.as_retriever(similarity_top_k=4)
 
@@ -953,8 +1219,12 @@ class RagFlow(Workflow):
         answer = index.as_query_engine().query(ev.question)
         return StopEvent(result=answer)
 
-flow = RagFlow(timeout=60)
-print(asyncio.run(flow.run(question="HNSW 索引在生产里怎么调")))
+async def main():
+    # Workflow.run 要在事件循环里调用，所以套一层 async main 再交给 asyncio.run
+    flow = RagFlow(timeout=60)
+    print(await flow.run(question="HNSW 索引在生产里怎么调"))
+
+asyncio.run(main())
 `,
       },
     ],
@@ -997,14 +1267,14 @@ print(asyncio.run(flow.run(question="HNSW 索引在生产里怎么调")))
         hint: "工具化检索：查询引擎当工具，agent 自主决定调不调。",
         code: `import asyncio
 
-from src import settings  # noqa: F401
-from llama_index.core import SimpleDirectoryReader, VectorStoreIndex
+from src.settings import load_documents  # 导入即完成模型与嵌入配置
+from llama_index.core import Settings, VectorStoreIndex
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.tools import QueryEngineTool, ToolMetadata
 from llama_index.core.agent.workflow import FunctionAgent
 
-documents = SimpleDirectoryReader("content").load_data()
-nodes = SentenceSplitter(chunk_size=512, chunk_overlap=64).get_nodes_from_documents(documents)
+documents = load_documents()
+nodes = SentenceSplitter(chunk_size=256, chunk_overlap=32).get_nodes_from_documents(documents)
 index = VectorStoreIndex(nodes)
 
 # ① 把查询引擎包成工具：说明写得越准，模型越知道何时该调
@@ -1012,15 +1282,18 @@ tool = QueryEngineTool(
     query_engine=index.as_query_engine(),
     metadata=ToolMetadata(
         name="search_knowledge",
-        description="检索站点内容（博客、笔记、项目）。问题涉及站内内容时调用。",
+        description="检索站内内容（博客、笔记、项目）。问题涉及站内内容时调用。",
     ),
 )
 
-# ② FunctionAgent：自己决定调工具，还是直接回答
+# ② FunctionAgent 要求模型支持工具调用：deepseek-flash 支持，默认没开，这里显式打开
+Settings.llm.is_function_calling_model = True
+
+# ③ 自己决定调工具，还是直接回答
 agent = FunctionAgent(
     tools=[tool],
-    llm=settings.Settings.llm,
-    system_prompt="回答站点相关问题前，先用 search_knowledge 检索；寒暄类问题直接回答。",
+    llm=Settings.llm,
+    system_prompt="回答站内内容相关的问题前，先用 search_knowledge 检索；寒暄类问题直接回答。",
 )
 
 async def main():
@@ -1070,8 +1343,8 @@ asyncio.run(main())
         hint: "评测脚本：造评测集 → 算检索指标 → 算生成指标。",
         code: `import asyncio
 
-from src import settings  # noqa: F401
-from llama_index.core import SimpleDirectoryReader, VectorStoreIndex
+from src.settings import load_documents  # 导入即完成模型与嵌入配置
+from llama_index.core import VectorStoreIndex
 from llama_index.core.evaluation import (
     FaithfulnessEvaluator,
     RelevancyEvaluator,
@@ -1079,12 +1352,15 @@ from llama_index.core.evaluation import (
 )
 from llama_index.core.node_parser import SentenceSplitter
 
-documents = SimpleDirectoryReader("content").load_data()
-nodes = SentenceSplitter(chunk_size=512, chunk_overlap=64).get_nodes_from_documents(documents)
+documents = load_documents()
+nodes = SentenceSplitter(chunk_size=256, chunk_overlap=32).get_nodes_from_documents(documents)
 index = VectorStoreIndex(nodes)
 retriever = index.as_retriever(similarity_top_k=4)
 
-# ① 检索指标：先用两条标注样本算 Hit Rate 与 MRR
+# 标注：这个问题应该命中讲切块那篇的头两块
+expected_ids = [n.node_id for n in nodes if n.metadata.get("file_name") == "chunking.md"][:2]
+
+# ① 检索指标：hit rate 看有没有命中，mrr 看命中的位置靠不靠前
 evaluator = RetrieverEvaluator.from_metric_names(
     ["mrr", "hit_rate"], retriever=retriever
 )
@@ -1092,7 +1368,7 @@ evaluator = RetrieverEvaluator.from_metric_names(
 async def main():
     result = await evaluator.aevaluate(
         query="切块粒度为什么会影响检索质量",
-        expected_ids=[nodes[0].node_id, nodes[1].node_id],
+        expected_ids=expected_ids,
     )
     print("检索指标：", result.metric_vals_dict)
 
