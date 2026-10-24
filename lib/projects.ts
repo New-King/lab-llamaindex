@@ -469,12 +469,12 @@ tags: [RAG, 工程化, 评测]
     title: "最小 RAG 闭环：读文件、建索引、问答",
     menuTitle: "最小闭环",
     summary:
-      "先跑通一条最短的链：目录 → Document → 索引 → 查询引擎。这一步之后，所有优化都是在这条链上换零件。",
+      "只做一件事：让「读文件 → 建索引 → 问答」跑通。跑完会看到一段回答，以及它引用了哪个文件、相似度多少。这一步之后，所有优化都是在这条链上换零件。",
     verify: {
       label: "跑脚本看结果",
       description: [
         "在 my-llamaindex-app 目录执行 uv run python -m src.basic",
-        "打印出回答与命中的来源文件名，说明「检索 + 合成」这条链已经通了",
+        "先看到「读到 4 篇文档」，再看到一段回答，最后是 2 行「来源: chunking.md 分数: 0.6xx」——说明检索和合成这两步都通了",
       ],
     },
     concepts: [
@@ -537,6 +537,9 @@ from llama_index.core import Document, SimpleDirectoryReader, VectorStoreIndex
 #    recursive=True 才会进 notes/ 与 blog/ 两个子目录（默认不递归）
 documents: list[Document] = SimpleDirectoryReader("content", recursive=True).load_data()
 
+# 一个文件 = 一个 Document，正文就是整个文件（不切块、不解析）
+print("读到", len(documents), "篇文档，每篇是一个 Document")
+
 # ② 建索引：切块 + 向量化全在这一行（默认内存向量库，重启即失）
 index = VectorStoreIndex.from_documents(documents)
 
@@ -567,12 +570,12 @@ for node in response.source_nodes:
     title: "切块与元数据：检索质量的上限",
     menuTitle: "切块与元数据",
     summary:
-      "切块决定「能不能被召回」，元数据决定「能不能被筛掉」。这一课把默认切块换成可控的两种策略，并把 frontmatter 变成可筛字段。",
+      "第 1 课那一行 `from_documents` 把切块和向量化包在一起，这一课把它拆开：先按 markdown 标题分节，再在节内按句子切块，并且把文件开头的 frontmatter 变成可筛字段。跑完能看到每块多大、带着哪些元数据。",
     verify: {
       label: "跑脚本看结果",
       description: [
         "在 my-llamaindex-app 目录执行 uv run python -m src.basic",
-        "打印出每个块的字符数与 metadata，能看到标题与日期已经从 frontmatter 带上来了",
+        "先看到「文档数 4」和 10 个元数据键（比第 1 课多出 title / date / type / tags），再看到「块数 18」和 5 行「字数 | 类型 | 标题 | 正文开头」",
       ],
     },
     concepts: [
@@ -669,12 +672,13 @@ md_parser = MarkdownNodeParser()
 sections = md_parser.get_nodes_from_documents(documents)
 
 # ③ 再按句子切块：块太大召回噪声多，太小语义不完整
+#    切出来的每一块都会继承文档的 metadata（title / type …），后面的元数据过滤靠它
 splitter = SentenceSplitter(chunk_size=256, chunk_overlap=32)
 nodes = splitter.get_nodes_from_documents(sections)
 
+# 看一眼前几块：字数 | type | title | 正文开头
 print("块数：", len(nodes))
 for node in nodes[:5]:
-    # 每块都继承了文档的 metadata，后面可以用来过滤
     print(" ", len(node.text), "字 |", node.metadata.get("type"), "|", node.metadata.get("title"), "|", node.text[:16].replace("\\n", " "))
 
 # ④ 用切好的块建索引：node_parser 换掉默认切块
@@ -701,12 +705,12 @@ print("回答：", engine.query("切块粒度为什么会影响检索质量"))
     title: "检索器与过滤：把召回变成可控参数",
     menuTitle: "检索器与过滤",
     summary:
-      "查询引擎是黑盒，检索器不是。这一课把索引换成显式检索器，看到每条结果的分数，并用元数据把不该出现的块筛掉。",
+      "上一课的查询引擎是个黑盒，这一课把它拆成两半：检索器负责「捞哪些块」，合成器负责「怎么答」。同一条查询跑两遍——不加过滤、只留 notes——对比两组结果，看得出过滤是在检索阶段就把内容排除了。",
     verify: {
       label: "跑脚本看结果",
       description: [
         "在 my-llamaindex-app 目录执行 uv run python -m src.basic",
-        "打印出每条命中的分数与 metadata，加了过滤条件后返回集合明显变小",
+        "「无过滤」那组前几条是 blog 的 pgvector-hnsw.md；「只留 type=notes」那组 5 条全是 notes，分数也从 0.7 掉到 0.39",
       ],
     },
     concepts: [
@@ -773,12 +777,12 @@ for hit in filtered.retrieve(question):
     title: "重排与后处理：召回之后还要挑一遍",
     menuTitle: "重排与后处理",
     summary:
-      "向量召回的判断标准是「像不像」，重排的判断标准是「能不能回答问题」。这一课对比不重排、只卡阈值、卡阈值加重排三种效果。",
+      "向量召回看「像不像」，重排看「能不能回答问题」。这一课把同一批候选走三条路：直接看分数 → 用阈值砍掉低分 → 再让模型重排，对比三者留下的东西有什么不同。",
     verify: {
       label: "跑脚本看结果",
       description: [
         "在 my-llamaindex-app 目录执行 uv run python -m src.basic",
-        "三段输出里，重排后的头一条明显更贴着问题，且低分噪声被阈值砍掉",
+        "召回 8 条（分数 0.3–0.8）→「卡阈值后剩 8」→ 重排打印 1–2 行「重排分 10.0 rerank.md」：注意重排分是 1–10，不是余弦相似度",
       ],
     },
     concepts: [
@@ -836,7 +840,7 @@ for item in ranked:
     title: "混合检索：关键词加语义，再融合",
     menuTitle: "混合检索",
     summary:
-      "语义检索擅长「意思像」，关键词检索擅长「字面准」。专有名词、缩写、产品名这类问题，两路一起召回再融合才稳。",
+      "语义检索擅长「意思像」，关键词检索擅长「字面准」。这一课加第二条召回路径，再把两路按排名融合。用「HNSW」这种专有名词提问时，关键词路会明显比向量路准。",
     install: {
       command: "uv add llama-index-retrievers-bm25",
       description: "在 my-llamaindex-app 目录执行，装上 BM25 关键词检索器。",
@@ -845,7 +849,7 @@ for item in ranked:
       label: "跑脚本看结果",
       description: [
         "在 my-llamaindex-app 目录执行 uv run python -m src.basic",
-        "打印出三组结果：单独向量、单独关键词、融合后的顺序，能看到融合把两路的长处合在一起",
+        "三行输出：「向量路」4 个文件名、「关键词路」4 个文件名（pgvector-hnsw.md 更靠前）、「融合后」4 行分数——融合分是排名算出来的，都在 0.0x 量级，不能和相似度比大小",
       ],
     },
     concepts: [
@@ -918,12 +922,12 @@ for hit in fusion.retrieve(question):
     title: "响应合成与引用：回答必须能指回原文",
     menuTitle: "合成与引用",
     summary:
-      "检索对了不等于回答对。合成阶段决定「几块一起喂模型」以及「怎么给出处」——不可审计的回答在生产里等于没有。",
+      "检索对了不等于回答对。合成阶段决定「几块一起喂模型」和「怎么给出处」。这一课跑两次合成：refine（逐块精炼，边答边改）与 tree_summarize（先分层汇总），并把 source_nodes 编成 [1][2] 这样的出处。",
     verify: {
       label: "跑脚本看结果",
       description: [
         "在 my-llamaindex-app 目录执行 uv run python -m src.basic",
-        "回答里出现引用编号，且每个编号都能对应到一条来源文件名",
+        "先看到「回答：…」（refine 合成的），再看到「出处：[1] x.md [2] y.md …」，最后一行「汇总版：…」——编号顺序就是 source_nodes 的顺序",
       ],
     },
     concepts: [
@@ -982,16 +986,16 @@ print("汇总版：", summary.synthesize(question, nodes=retriever.retrieve(ques
     title: "入库流水线：抽取、切块与落库",
     menuTitle: "入库流水线",
     summary:
-      "两件事串成一条链：入库前先把正文抽成字段，再把「读 → 抽 → 切 → 向量化 → 落库」做成可重跑、可增量的流水线，最终落到 Postgres。",
+      "前六课每次跑都从零重来。这一课把它变成「建一次、之后只补新的」：正文先被模型抽成字段写进 metadata，再走一条可重跑的流水线落进 Postgres。改一篇 md 重跑，只有那一篇会重新处理。",
     install: {
       command: "uv add llama-index-vector-stores-postgres",
-      description: "在 my-llamaindex-app 目录执行，装上 Postgres + pgvector 的向量库适配。",
+      description: "在 my-llamaindex-app 目录执行，装上 Postgres + pgvector 的向量库适配（另需一个带 pgvector 的 Postgres，见文件说明）。",
     },
     verify: {
       label: "跑两个脚本看结果",
       description: [
-        "在 my-llamaindex-app 目录执行 uv run python -m src.extract，逐篇打印抽到的标题与标签",
-        "再执行 uv run python -m src.ingest：第一次打印处理了多少块；改一篇 md 后重跑，只有那一篇被重新处理",
+        "先执行 uv run python -m src.extract：4 行「文件名 → 抽到的标题 [标签…]」",
+        "再执行 uv run python -m src.ingest：第一次打印「本次处理块数 10」；原样重跑是 0；改一篇 md 后重跑，只有那一篇的块数（2 左右）",
       ],
     },
     concepts: [
@@ -1077,7 +1081,7 @@ if __name__ == "__main__":
         path: "src/ingest.py",
         order: 2,
         action: "create",
-        hint: "入库脚本：抽字段、切块、向量化串成一条流水线，靠 docstore 跳过没变的文档，最后落 pgvector。",
+        hint: "入库脚本：抽字段、切块、向量化串成一条流水线，靠 docstore 跳过没变的文档，最后落 pgvector。跑之前要先有一个带 pgvector 的 Postgres（本机装或容器起都行），把连接串填进 .env.local 的 DATABASE_URL。",
         code: `import os
 from pathlib import Path
 
@@ -1121,7 +1125,7 @@ pipeline = IngestionPipeline(
 nodes = pipeline.run(documents=documents)
 print("本次处理块数：", len(nodes))
 
-# ④ 落盘索引与 docstore：下次直接加载，不用重算
+# ⑤ 落盘索引与 docstore：下次直接加载，不用重算
 storage_context = StorageContext.from_defaults(vector_store=vector_store, docstore=docstore)
 index = VectorStoreIndex(nodes, storage_context=storage_context)
 index.storage_context.persist(persist_dir=".storage")
@@ -1154,12 +1158,12 @@ print("已落库，提问：", index.as_query_engine().query("切块粒度怎么
     title: "Workflow：把检索流程写成事件驱动的步骤",
     menuTitle: "Workflow",
     summary:
-      "一次检索不够时，需要「判断 → 检索 → 判断 → 再检索」。这一课用事件驱动的 Workflow 把这条流程写清楚，并说明它与状态机式编排的分工。",
+      "一次检索不够时，流程会变成「检索 → 判断 → 再检索 → 合成」。这一课用事件驱动的 Workflow 写这条流程：每一步接收一种事件、抛出另一种事件，脚本会把走过哪几步打出来。",
     verify: {
       label: "跑脚本看结果",
       description: [
         "在 my-llamaindex-app 目录执行 uv run python -m src.workflow",
-        "打印出每一步的事件流，一次检索不达标时能看到第二次检索被触发",
+        "依次打印「① 第一次检索：最高分 0.xx」→（分数不到 0.7 时）「→ 不够用，发一个 Retry 事件」→「② 第二次检索」→「③ 合成回答」→「最终回答：…」",
       ],
     },
     concepts: [
@@ -1205,24 +1209,29 @@ class RagFlow(Workflow):
     @step
     async def first_retrieve(self, ev: StartEvent) -> Retrieved | Retry:
         hits = retriever.retrieve(ev.question)
-        # 分数都太低就改写问题再来一轮
-        if max((h.score or 0) for h in hits) < 0.7:
+        best = max((h.score or 0) for h in hits)
+        print(f"① 第一次检索：最高分 {best:.2f}")
+        # 分数太低就改写问题再来一轮
+        if best < 0.7:
+            print("   → 不够用，发一个 Retry 事件")
             return Retry(question=f"{ev.question}（换个说法再查一次）")
         return Retrieved(question=ev.question, hits=hits)
 
     @step
     async def retry_retrieve(self, ev: Retry) -> Retrieved:
-        return Retrieved(question=ev.question, hits=retriever.retrieve(ev.question))
+        hits = retriever.retrieve(ev.question)
+        print(f"② 第二次检索：最高分 {max((h.score or 0) for h in hits):.2f}")
+        return Retrieved(question=ev.question, hits=hits)
 
     @step
     async def synthesize(self, ev: Retrieved) -> StopEvent:
-        answer = index.as_query_engine().query(ev.question)
-        return StopEvent(result=answer)
+        print("③ 合成回答")
+        return StopEvent(result=index.as_query_engine().query(ev.question))
 
 async def main():
     # Workflow.run 要在事件循环里调用，所以套一层 async main 再交给 asyncio.run
     flow = RagFlow(timeout=60)
-    print(await flow.run(question="HNSW 索引在生产里怎么调"))
+    print("最终回答：", await flow.run(question="HNSW 索引在生产里怎么调"))
 
 asyncio.run(main())
 `,
@@ -1250,7 +1259,7 @@ asyncio.run(main())
       label: "跑脚本看结果",
       description: [
         "在 my-llamaindex-app 目录执行 uv run python -m src.agent",
-        "打印出工具调用记录：需要查资料的问题出现检索调用，纯寒暄的问题直接回答",
+        "第一个问题下面出现 1–2 行「调用工具： search_knowledge …」，第二个问题（谢谢）没有任何工具调用，直接给回答",
       ],
     },
     concepts: [
@@ -1258,20 +1267,22 @@ asyncio.run(main())
       { text: "`ToolMetadata` — 工具的名字与说明，模型据此判断什么时候调用" },
       { text: "`FunctionAgent` — 会调用工具、并根据结果继续推理的 agent" },
       { text: "`system_prompt` — agent 的行为约束：什么时候检索、什么时候直接回答" },
+      { text: "`stream_events` — 把执行过程的事件流出来，这里用来观察工具调用" },
+      { text: "`ToolCallResult` — 工具执行完的事件，带工具名、入参与返回" },
     ],
     files: [
       {
         path: "src/agent.py",
         order: 1,
         action: "create",
-        hint: "工具化检索：查询引擎当工具，agent 自主决定调不调。",
+        hint: "工具化检索：查询引擎当工具，agent 自主决定调不调；过程中调了哪些工具会打出来。",
         code: `import asyncio
 
 from src.settings import load_documents  # 导入即完成模型与嵌入配置
 from llama_index.core import Settings, VectorStoreIndex
+from llama_index.core.agent.workflow import FunctionAgent, ToolCallResult
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.tools import QueryEngineTool, ToolMetadata
-from llama_index.core.agent.workflow import FunctionAgent
 
 documents = load_documents()
 nodes = SentenceSplitter(chunk_size=256, chunk_overlap=32).get_nodes_from_documents(documents)
@@ -1296,9 +1307,18 @@ agent = FunctionAgent(
     system_prompt="回答站内内容相关的问题前，先用 search_knowledge 检索；寒暄类问题直接回答。",
 )
 
+async def ask(question):
+    """问一次，并把过程中的工具调用打出来。"""
+    print(f"\\n=== 问题：{question} ===")
+    handler = agent.run(question)
+    async for ev in handler.stream_events():
+        if isinstance(ev, ToolCallResult):
+            print("  调用工具：", ev.tool_name, ev.tool_kwargs)
+    print("回答：", await handler)
+
 async def main():
-    print(await agent.run("切块粒度怎么定"))
-    print(await agent.run("谢谢"))
+    await ask("切块粒度怎么定")
+    await ask("谢谢")
 
 asyncio.run(main())
 `,
@@ -1321,12 +1341,13 @@ asyncio.run(main())
     title: "评测：怎么证明检索真的变好了",
     menuTitle: "评测",
     summary:
-      "没有评测就没有优化。这一课用一小批评测问题算出检索指标与生成指标，把「感觉更准」变成可以对比的数字。",
+      "没有评测就没有优化。这一课给一条问题标上「应该命中哪两块」，算出检索指标（MRR / Hit Rate）与生成指标（忠实度 / 相关性），把「感觉更准」变成能对比的数字。",
     verify: {
       label: "跑脚本看结果",
       description: [
         "在 my-llamaindex-app 目录执行 uv run python -m src.eval",
-        "打印出 Hit Rate、MRR 与忠实度得分；改一次切块参数后重跑，指标变化可见",
+        "先看到「检索指标: {'mrr': 1.0, 'hit_rate': 1.0}」，再看到「忠实度: 1.0 相关性: 1.0」——语料小，满分正常",
+        "把 chunk_size 改成 96 重跑：块被切碎，检索指标掉到 0.0，这就是评测能看出的变化",
       ],
     },
     concepts: [
