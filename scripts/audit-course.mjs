@@ -201,6 +201,36 @@ for (const l of lessons) {
   }
 }
 
+// ---------- 6.6 首次出现的调用必须有注释说明 ----------
+// 规则：某个方法 / 类第一次在某课出现时，该课代码里要有一行注释提到它，否则学员不知道它干什么
+const PY_BUILTIN = new Set([
+  "print", "len", "range", "list", "dict", "set", "tuple", "str", "int", "float", "bool",
+  "round", "open", "sorted", "enumerate", "zip", "min", "max", "sum", "abs", "isinstance",
+  "hasattr", "getattr", "super", "type", "format", "join", "append", "items", "keys", "values",
+  "update", "get", "split", "strip", "replace", "startswith", "endswith", "lower", "upper",
+  "lstrip", "rstrip", "exists", "mkdir", "read_text", "resolve", "parent", "glob", "rglob",
+  "Exception", "ValueError", "TypeError", "main", "ask", "extract_fields", "load_documents",
+]);
+const seenApi = new Set();
+for (const l of projects) {
+  const code = l.code;
+  const comments = code
+    .split("\n")
+    .filter((line) => line.trim().startsWith("#"))
+    .join("\n");
+  const names = new Set([
+    ...[...code.matchAll(/(?<![\w.])([A-Z][A-Za-z0-9_]*|__[a-z_]+__)\(/g)].map((m) => m[1]),
+    ...[...code.matchAll(/\.([a-z_][a-z0-9_]*)\(/g)].map((m) => m[1]),
+    ...[...code.matchAll(/(?<![\w.])([a-z_]+_[a-z_]+)\(/g)].map((m) => m[1]),
+  ]);
+  for (const n of names) {
+    if (PY_BUILTIN.has(n)) continue;
+    // 课页是独立展示的：每一课都要自己说清楚，不能指望上一课讲过
+    if (l.concepts.includes(n)) continue;
+    if (!comments.includes(n)) W(`[${l.slug}] 用到的 ${n}() 既不在知识点里，也没有注释说明`);
+  }
+}
+
 // ---------- 7. 跨课引用 ----------
 for (const l of lessons)
   for (const m of l.block.matchAll(/第\s*(\d+)\s*课/g)) {

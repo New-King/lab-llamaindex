@@ -25,34 +25,34 @@
 ### 第 3 课 · 检索器与过滤
 
 - **目标**：把 `Index` 变成可控的检索器（topK、元数据过滤、返回结构）
-- **示例**：`index.as_retriever(similarity_top_k=5, filters=MetadataFilters(...))` + 打印 `NodeWithScore`
-- **要点**：`similarity_top_k` 与最终进 prompt 的条数是两件事（中间还有后处理）；相关性分数要打印出来看，别凭感觉；过滤走元数据而不是「检索后再筛」
-- **验收**：同一问题加/不加元数据过滤，返回集合可解释
+- **示例**：`as_query_engine(similarity_top_k=5, filters=MetadataFilters([MetadataFilter(key="type", value="notes")]))` → `retrieve(QueryBundle(...))` 看候选 → `query(...)` 拿回答
+- **要点**：`similarity_top_k` 与最终进 prompt 的条数是两件事（中间还有后处理）；相关性分数要打印出来看，别凭感觉；过滤走元数据而不是「检索后再筛」；过滤会连正确答案一起排除，代价要能看见
+- **验收**：只看 notes 时 5 条分数掉到 0.37–0.40，且回答变成拒答
 - **文档**：`/docs/module_guides/querying/retriever`
 
 ### 第 4 课 · 重排与后处理
 
 - **目标**：召回 → 精排，是 RAG 质量提升性价比最高的一步
-- **示例**：`SimilarityPostprocessor(similarity_cutoff)` + `LLMRerank(top_n)`；对比「不重排 / 只过滤 / 过滤 + 重排」
-- **要点**：向量召回偏向「语义像」，重排看「能不能回答问题」；阈值过高会丢掉正确答案；LLM 重排有成本和延迟，要说明何时值得
-- **验收**：构造一个「向量召回错、重排纠正」的问题，能看到顺序变化
-- **文档**：`/docs/module_guides/querying/node_postprocessors`
+- **示例**：`as_query_engine(similarity_top_k, node_postprocessors=[SimilarityPostprocessor(similarity_cutoff), LLMRerank(top_n)])` 一次配好整条链路；`retrieve(QueryBundle(...))` 只看候选，`query(...)` 拿回答与 `source_nodes`
+- **要点**：向量召回偏向「语义像」，重排看「能不能回答问题」；阈值放在重排之前，少送几块给模型；阈值过高会丢掉正确答案；LLM 重排有成本和延迟
+- **验收**：先打印「召回 8 条 → 过完链：3」与 3 条重排分（1–10），再打印一段回答与 3 条引用
+- **文档**：`/docs/module_guides/querying/node_postprocessors`、`/docs/module_guides/deploying/query_engine`
 
 ### 第 5 课 · 混合检索与多查询
 
 - **目标**：关键词 + 语义融合（专有名词/产品名这类语义检索易漏的场景）
-- **示例**：`BM25Retriever` 与向量检索两路召回；`QueryFusionRetriever` 用 `num_queries=3` 让模型改写问题，再按 RRF 融合
-- **要点**：为什么需要 BM25（专有名词、缩写、精确串）；RRF 是最省事的融合（按排名而非分数）；中文没有空格，切词规则要显式给（`token_pattern`）；多路查询靠改写问题扩大召回面
-- **验收**：给一个「语义检索漏、关键词能中」的问题，融合后召回命中
+- **示例**：`BM25Retriever` 与向量检索两路召回；`QueryFusionRetriever` 用 `num_queries=3` 让模型改写问题，再按 RRF 融合；`RetrieverQueryEngine.from_args(fusion)` 接引擎拿回答
+- **要点**：为什么需要 BM25（专有名词、缩写、精确串）；RRF 是最省事的融合（按排名而非分数）；中文没有空格，切词规则要显式给（`token_pattern`）；多路查询靠改写问题扩大召回面；自定义检索器不能走 `as_query_engine`，要用 `RetrieverQueryEngine` 组装
+- **验收**：给一个「语义检索漏、关键词能中」的问题，融合后召回命中，接引擎后拿到带引用的回答
 - **文档**：`/docs/examples/retrievers/reciprocal_rerank_fusion`、`/docs/module_guides/querying/retriever/retriever_modes`
 
 ### 第 6 课 · 响应合成与引用
 
 - **目标**：从「一段话」升级到「带出处的回答」
-- **示例**：`response_mode`（`compact` / `refine` / `tree_summarize`）+ 把 `source_nodes` 映射成 `[1][2]` 引用编号
-- **要点**：不同 response_mode 的取舍（成本 / 质量 / 是否会被截断）；回答里必须能指回原文块，否则不可审计；前端渲染引用 = 把 `source_nodes` 的 metadata 传出去
-- **验收**：回答带 `[N]`，每个 `[N]` 能对应到具体文件的某一块
-- **文档**：`/docs/module_guides/querying/response_synthesizers`
+- **示例**：`CitationQueryEngine.from_args(index, citation_chunk_size, node_postprocessors=[...])`：回答自带 `[1][2]` 编号、`source_nodes` 按编号对应原文，后处理链原样叠加
+- **要点**：出处交给引擎编号，不手拼；`citation_chunk_size` 决定引用粒度（越小越精确）；换引擎类时参数照搬（`node_postprocessors` / `retriever`），能力是叠加的；前端渲染引用 = 把 `source_nodes` 的 metadata 传出去
+- **验收**：回答带 `[N]`，`source_nodes` 的第 N 条能对应到具体文件的某一块，分数是重排分
+- **文档**：`/docs/module_guides/querying/response_synthesizers`、`/docs/examples/query_engine/citation_query_engine`
 
 ### 第 7 课 · 入库流水线：抽取、切块与落库
 
@@ -73,9 +73,9 @@
 ### 第 9 课 · 评测：怎么证明检索变好了
 
 - **目标**：没有评测就没有优化 —— 把「感觉更准」变成数字
-- **示例**：`RetrieverEvaluator`（hit rate / MRR）+ Faithfulness / Relevancy evaluator；准备 20 条问题 + 期望答案的评测集
+- **示例**：`RetrieverEvaluator.from_metric_names(["mrr", "hit_rate"])` + `FaithfulnessEvaluator` / `RelevancyEvaluator`；用一条标注问题跑通「检索指标 + 生成指标」，改 `similarity_top_k` 看指标变化
 - **要点**：评测集要覆盖「事实型 / 汇总型 / 应该拒答型」；检索指标与生成指标分开看（召回没中，别怪模型）；每次改切块/重排/融合都跑一遍，否则改不动
-- **验收**：给出一张「改动前后」的指标对比表，能指出哪一步贡献最大
+- **验收**：跑出 `{'mrr': 0.5, 'hit_rate': 1.0}` 与 `忠实度 1.0 / 相关性 1.0`；把 `similarity_top_k` 改成 1 重跑，检索指标归零
 - **文档**：`/docs/module_guides/evaluating`、`/docs/optimizing/evaluation`
 
 ---
