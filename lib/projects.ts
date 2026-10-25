@@ -1069,7 +1069,8 @@ for i, node in enumerate(response.source_nodes):
       label: "跑两个脚本看结果",
       description: [
         "先执行 uv run python -m src.extract：4 行「文件名 → 抽到的标题 [标签…]」",
-        "再执行 uv run python -m src.ingest：第一次打印「本次处理块数 19」；原样重跑是 0；改一篇 md 后重跑，只有那一篇的块数（4 到 6，看改的是哪篇）",
+        "再执行 uv run python -m src.ingest：第一次打印「本次需要处理文档数： 4」「本次处理块数： 19」，并给出一次回答",
+        "原样重跑两个数都是 0，回答照样有；改一篇 md 再跑，只有「1 篇 / 4 块」，库里行数从 19 变 20——旧块被删掉换成新的",
       ],
     },
     concepts: [
@@ -1087,7 +1088,7 @@ for i, node in enumerate(response.source_nodes):
         path: "src/extract.py",
         order: 1,
         action: "create",
-        hint: "抽取模块：先定义要哪些字段，再包成流水线的一步，入库脚本直接复用。",
+        hint: "让模型给每篇文章写标题、摘要和三个标签。",
         code: `from pydantic import BaseModel, Field
 
 from src.settings import load_documents  # 导入即完成模型与嵌入配置
@@ -1135,6 +1136,8 @@ class FieldExtractor(TransformComponent):
             extracted.append(
                 Document(
                     text=node.text,
+                    # id_ 沿用原来的：不传就会生成新 id，增量账本和向量库里的 ref_doc_id 全对不上
+                    id_=node.id_,
                     metadata={
                         **node.metadata,
                         "title": fields.title,
@@ -1160,13 +1163,13 @@ if __name__ == "__main__":
         path: "src/ingest.py",
         order: 2,
         action: "create",
-        hint: "入库脚本：抽字段、切块、向量化串成一条流水线，靠 docstore 跳过没变的文档，最后落 pgvector。跑之前要先有一个带 pgvector 的 Postgres（本机装或容器起都行），把连接串填进 .env.local 的 DATABASE_URL。",
+        hint: "读 content 里的文章，让模型给每篇写标题、摘要和标签，再切成小块存进数据库；重跑时只处理改过的。跑之前要先有一个装了 pgvector 插件的 Postgres（向量就存在它里面），把连接地址填进 .env.local 的 DATABASE_URL。",
         code: `import os
 from pathlib import Path
 
 from src.extract import FieldExtractor
 from src.settings import load_documents  # 导入即完成模型与嵌入配置
-from llama_index.core import StorageContext, VectorStoreIndex
+from llama_index.core import Settings, VectorStoreIndex
 from llama_index.core.ingestion import IngestionPipeline
 from llama_index.core.node_parser import MarkdownNodeParser, SentenceSplitter
 from llama_index.core.storage.docstore import SimpleDocumentStore
@@ -1175,8 +1178,9 @@ from llama_index.vector_stores.postgres import PGVectorStore
 # ① load_documents() 读语料 → list[Document]（正文 + frontmatter 元数据）
 documents = load_documents()
 
-# ② SimpleDocumentStore 存已处理文档的指纹 → docstore（未变就跳过，增量的关键）
-#    Path：文件路径对象；from_persist_path：从上次落盘的 docstore.json 恢复
+# ② SimpleDocumentStore 当账本：记「文档 id → 内容指纹」，重跑时靠它找出改过的
+#    get_document_hash 取上次的指纹，set_document_hash 写回新的指纹
+#    Path：文件路径对象；from_persist_path：从上次落盘的 docstore.json 恢复（没有该文件就是全新的一份）
 docstore_path = Path(".storage/docstore.json")
 docstore_path.parent.mkdir(exist_ok=True)
 docstore = (
@@ -1185,38 +1189,52 @@ docstore = (
     else SimpleDocumentStore()
 )
 
-# ③ PGVectorStore 落 Postgres → 向量库（跨进程仍在，表结构由适配器自己建）
-#    from_params：用连接串、表名、向量维度这几个参数造出来
+# ③ 只挑出新文档和改过的文档 → 指纹没变的不再切块、不再调模型
+changed = [doc for doc in documents if docstore.get_document_hash(doc.doc_id) != doc.hash]
+print("本次需要处理文档数：", len(changed))
+
+# ④ PGVectorStore 落 Postgres → 向量库（跨进程仍在，表结构由适配器自己建）
+#    from_params：用连接串、表名、向量维度造出来
+#    连接串要写清驱动：同步用 psycopg2、异步用 asyncpg，两个都得给，否则解析端口时报错
+db_url = os.environ["DATABASE_URL"]
 vector_store = PGVectorStore.from_params(
-    connection_string=os.environ["DATABASE_URL"],
+    connection_string=db_url.replace("postgresql://", "postgresql+psycopg2://"),
+    async_connection_string=db_url.replace("postgresql://", "postgresql+asyncpg://"),
     table_name="llama_chunks",
     embed_dim=1024,
 )
 
-# ④ 流水线：FieldExtractor 抽字段 → MarkdownNodeParser 分节 → SentenceSplitter 切块 → 向量化
-#    指纹没变的文档整条跳过，所以「本次处理块数」才是增量的体现
+# ⑤ 改过的文档先删掉旧块 → 流水线只加不删，不先删就会在库里堆两份
+#    vector_store.delete(doc_id)：按文档 id 把它名下的块全删掉
+for doc in changed:
+    if docstore.get_document_hash(doc.doc_id):
+        vector_store.delete(doc.doc_id)
+
+# ⑥ IngestionPipeline：抽字段 → 分节 → 切块 → 向量化
+#    MarkdownNodeParser 按标题分节、SentenceSplitter 节内切块
+#    Settings.embed_model 必须列进去：没有向量的节点不会被写进向量库，会静默丢掉
 pipeline = IngestionPipeline(
     transformations=[
         FieldExtractor(),
-        # MarkdownNodeParser：按标题分节，顺序和前几课一致（先分节、再切块）
         MarkdownNodeParser(),
-        # SentenceSplitter：节内按句子切块
         SentenceSplitter(chunk_size=256, chunk_overlap=32),
+        Settings.embed_model,
     ],
-    docstore=docstore,
     vector_store=vector_store,
 )
 
-# ⑤ run 执行流水线 → list[TextNode]（只含本次真正处理的块）
-nodes = pipeline.run(documents=documents)
+# ⑦ run 只处理挑出来的文档 → list[TextNode]（本次真正入库的块）
+nodes = pipeline.run(documents=changed)
 print("本次处理块数：", len(nodes))
 
-# ⑥ VectorStoreIndex 建索引并落盘 → .storage（from_defaults 组装 StorageContext；persist 写盘，下次直接加载）
-storage_context = StorageContext.from_defaults(vector_store=vector_store, docstore=docstore)
-index = VectorStoreIndex(nodes, storage_context=storage_context)
-index.storage_context.persist(persist_dir=".storage")
+# ⑧ 账本更新并落盘 → .storage/docstore.json（下次靠它判断哪些文档没变）
+for doc in changed:
+    docstore.set_document_hash(doc.doc_id, doc.hash)
+docstore.persist(str(docstore_path))
 
-# ⑦ as_query_engine + query 查一次 → 回答（数据确实落在 Postgres 里）
+# ⑨ from_vector_store 直接从向量库拿索引 → as_query_engine().query 问一次
+#    不依赖本次处理的节点：重跑时 nodes 为 0，照样能查到已经入库的内容
+index = VectorStoreIndex.from_vector_store(vector_store)
 print("已落库，提问：", index.as_query_engine().query("切块粒度怎么定"))
 `,
       },
