@@ -40,7 +40,7 @@ export const HOME = {
       title: "本 Lab 讲什么",
       paragraphs: [
         "本 Lab 采用项目驱动式学习：在独立的 Python 项目 my-llamaindex-app 里，按左侧课程把一个「网站内容知识库」从最小闭环做到可评测。",
-        "学习路径：最小闭环 → 切块与元数据 → 检索器与过滤 → 重排 → 混合检索 → 合成与引用 → 查询理解与路由 → 入库流水线 → 结构化抽取 → 工作流 → 工具化检索 → 评测。",
+        "学习路径：最小闭环 → 切块与元数据 → 检索器与过滤 → 重排 → 混合检索与多路查询 → 合成与引用 → 入库流水线 → 工作流 → 评测。",
       ],
     },
     {
@@ -60,7 +60,7 @@ export const HOME = {
       { label: "检索框架", value: "llama-index-core" },
       { label: "对话模型", value: "DeepSeek（OpenAI 兼容端点）" },
       { label: "嵌入模型", value: "硅基流动 BAAI/bge-large-zh-v1.5（1024 维）" },
-      { label: "向量库", value: "先内存，第 8 课起 Postgres + pgvector" },
+      { label: "向量库", value: "先内存，第 7 课起 Postgres + pgvector" },
       { label: "验证方式", value: "每课一个可独立运行的 Python 脚本" },
     ] satisfies HomeStackItem[],
   },

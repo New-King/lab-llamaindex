@@ -705,7 +705,7 @@ print("回答：", engine.query("切块粒度为什么会影响检索质量"))
     title: "检索器与过滤：把召回变成可控参数",
     menuTitle: "检索器与过滤",
     summary:
-      "上一课的查询引擎是个黑盒，这一课把它拆成两半：检索器负责「捞哪些块」，合成器负责「怎么答」。同一条查询跑两遍——不加过滤、只留 notes——对比两组结果，看得出过滤是在检索阶段就把内容排除了。",
+      "第 2 课最后用 `index.as_query_engine().query(...)` 拿答案，那一步只看得到回答，看不到它捞了哪几块、每块多少分。这一课把这层拆开：`as_retriever` 只负责捞块（分数和 metadata 都能打印），合成器负责把块写成答案。同一条查询跑两遍——不加过滤、只留 notes——对比两组结果，看得出过滤是在检索阶段就把内容排除了。",
     verify: {
       label: "跑脚本看结果",
       description: [
@@ -840,7 +840,7 @@ for item in ranked:
     title: "混合检索：关键词加语义，再融合",
     menuTitle: "混合检索",
     summary:
-      "语义检索擅长「意思像」，关键词检索擅长「字面准」。这一课加第二条召回路径，再把两路按排名融合。用「HNSW」这种专有名词提问时，关键词路会明显比向量路准。",
+      "语义检索擅长「意思像」，关键词检索擅长「字面准」，两个都要。这一课加第二条召回路径（BM25），再让模型把同一个问题改写成 3 种问法一起查，最后按排名融合。「HNSW」这种专有名词，关键词路明显比向量路准。",
     install: {
       command: "uv add llama-index-retrievers-bm25",
       description: "在 my-llamaindex-app 目录执行，装上 BM25 关键词检索器。",
@@ -849,7 +849,7 @@ for item in ranked:
       label: "跑脚本看结果",
       description: [
         "在 my-llamaindex-app 目录执行 uv run python -m src.basic",
-        "三行输出：「向量路」4 个文件名、「关键词路」4 个文件名（pgvector-hnsw.md 更靠前）、「融合后」4 行分数——融合分是排名算出来的，都在 0.0x 量级，不能和相似度比大小",
+        "三行输出：「向量路」4 个文件名、「关键词路」4 个文件名（pgvector-hnsw.md 更靠前）、「融合后」4 行分数——融合分是排名算出来的，0.1 上下，不能和相似度（0–1）比大小",
       ],
     },
     concepts: [
@@ -865,7 +865,7 @@ for item in ranked:
         path: "src/basic.py",
         order: 1,
         action: "replace",
-        hint: "覆盖成「向量 + BM25 融合」：两路各自召回，再按排名融合。",
+        hint: "覆盖成「向量 + BM25 融合」：两路各自召回，每个问题再改写成 3 种问法，最后按排名融合。",
         code: `from src.settings import load_documents  # 导入即完成模型与嵌入配置
 from llama_index.core import VectorStoreIndex
 from llama_index.core.node_parser import SentenceSplitter
@@ -892,10 +892,11 @@ print("向量路：", [h.node.metadata.get("file_name") for h in vector_retrieve
 print("关键词路：", [h.node.metadata.get("file_name") for h in keyword_retriever.retrieve(question)])
 
 # ③ 融合：RRF 按排名（不是分数）合并两路
+#    num_queries=3：模型先把问题改写成 3 种问法，每种都查两路，再统一按排名合并
 fusion = QueryFusionRetriever(
     retrievers=[vector_retriever, keyword_retriever],
     similarity_top_k=4,
-    num_queries=1,
+    num_queries=3,
     mode="reciprocal_rerank",
     use_async=False,
 )
@@ -1158,7 +1159,7 @@ print("已落库，提问：", index.as_query_engine().query("切块粒度怎么
     title: "Workflow：把检索流程写成事件驱动的步骤",
     menuTitle: "Workflow",
     summary:
-      "一次检索不够时，流程会变成「检索 → 判断 → 再检索 → 合成」。这一课用事件驱动的 Workflow 写这条流程：每一步接收一种事件、抛出另一种事件，脚本会把走过哪几步打出来。",
+      "一次检索不够时，流程会变成「检索 → 判断 → 再检索 → 合成」。这一课用事件驱动的 Workflow 写这条流程：每一步接收一种事件、抛出另一种事件，脚本会把走过哪几步打出来。（把检索器包成工具交给 `FunctionAgent`，就是「模型自己决定查不查」的 agent 形态，属于另一条路，本课不展开。）",
     verify: {
       label: "跑脚本看结果",
       description: [
@@ -1245,93 +1246,6 @@ asyncio.run(main())
       {
         title: "Workflow 基础",
         href: "https://docs.llamaindex.ai/en/stable/understanding/workflows/",
-      },
-    ],
-  },
-  {
-    kind: "project",
-    slug: "agent-tools",
-    title: "工具化检索：让模型决定什么时候查",
-    menuTitle: "工具化检索",
-    summary:
-      "固定检索链的问题是「不该查也查、该查不查都发生了」。这一课把查询引擎包成工具，交给会调工具的 agent 自主决定。",
-    verify: {
-      label: "跑脚本看结果",
-      description: [
-        "在 my-llamaindex-app 目录执行 uv run python -m src.agent",
-        "第一个问题下面出现 1–2 行「调用工具： search_knowledge …」，第二个问题（谢谢）没有任何工具调用，直接给回答",
-      ],
-    },
-    concepts: [
-      { text: "`QueryEngineTool` — 把查询引擎包成 agent 能调用的工具" },
-      { text: "`ToolMetadata` — 工具的名字与说明，模型据此判断什么时候调用" },
-      { text: "`FunctionAgent` — 会调用工具、并根据结果继续推理的 agent" },
-      { text: "`system_prompt` — agent 的行为约束：什么时候检索、什么时候直接回答" },
-      { text: "`stream_events` — 把执行过程的事件流出来，这里用来观察工具调用" },
-      { text: "`ToolCallResult` — 工具执行完的事件，带工具名、入参与返回" },
-    ],
-    files: [
-      {
-        path: "src/agent.py",
-        order: 1,
-        action: "create",
-        hint: "工具化检索：查询引擎当工具，agent 自主决定调不调；过程中调了哪些工具会打出来。",
-        code: `import asyncio
-
-from src.settings import load_documents  # 导入即完成模型与嵌入配置
-from llama_index.core import Settings, VectorStoreIndex
-from llama_index.core.agent.workflow import FunctionAgent, ToolCallResult
-from llama_index.core.node_parser import SentenceSplitter
-from llama_index.core.tools import QueryEngineTool, ToolMetadata
-
-documents = load_documents()
-nodes = SentenceSplitter(chunk_size=256, chunk_overlap=32).get_nodes_from_documents(documents)
-index = VectorStoreIndex(nodes)
-
-# ① 把查询引擎包成工具：说明写得越准，模型越知道何时该调
-tool = QueryEngineTool(
-    query_engine=index.as_query_engine(),
-    metadata=ToolMetadata(
-        name="search_knowledge",
-        description="检索站内内容（博客、笔记、项目）。问题涉及站内内容时调用。",
-    ),
-)
-
-# ② FunctionAgent 要求模型支持工具调用：deepseek-flash 支持，默认没开，这里显式打开
-Settings.llm.is_function_calling_model = True
-
-# ③ 自己决定调工具，还是直接回答
-agent = FunctionAgent(
-    tools=[tool],
-    llm=Settings.llm,
-    system_prompt="回答站内内容相关的问题前，先用 search_knowledge 检索；寒暄类问题直接回答。",
-)
-
-async def ask(question):
-    """问一次，并把过程中的工具调用打出来。"""
-    print(f"\\n=== 问题：{question} ===")
-    handler = agent.run(question)
-    async for ev in handler.stream_events():
-        if isinstance(ev, ToolCallResult):
-            print("  调用工具：", ev.tool_name, ev.tool_kwargs)
-    print("回答：", await handler)
-
-async def main():
-    await ask("切块粒度怎么定")
-    await ask("谢谢")
-
-asyncio.run(main())
-`,
-      },
-    ],
-    docLinks: [
-      {
-        title: "Agent 总览",
-        href: "https://docs.llamaindex.ai/en/stable/understanding/agent/",
-      },
-      {
-        title: "把查询引擎当工具",
-        href: "https://docs.llamaindex.ai/en/stable/module_guides/deploying/query_engine/",
       },
     ],
   },

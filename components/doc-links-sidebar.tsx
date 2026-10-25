@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { labPreview, labPreviewCollapsed } from "@/lib/layout-classes";
 import type { DocLink } from "@/lib/doc-link";
 
-const STORAGE_KEY = "lab-langgraph:doc-sidebar-collapsed";
+const STORAGE_KEY = "lab-llamaindex:doc-sidebar-collapsed";
 
 /** 右侧官方文档链接；桌面端可收起，给代码区让出宽度 */
 export function DocLinksSidebar({

@@ -1,6 +1,6 @@
 # 课表：LlamaIndex（RAG 工程化）
 
-> 主线 10 课，全部围绕一个目标：**把检索做对** —— 从「能跑通」到「能用、能落地、能评测」。
+> 主线 9 课，全部围绕一个目标：**把检索做对** —— 从「能跑通」到「能用、能落地、能评测」。
 > 学员只维护一个项目 `my-llamaindex-app`（Python），每课覆盖式演进（见 `README.md`）。
 > 场景：网站内容知识库（markdown 语料 → 带引用的问答）。
 
@@ -41,8 +41,8 @@
 ### 第 5 课 · 混合检索与多查询
 
 - **目标**：关键词 + 语义融合（专有名词/产品名这类语义检索易漏的场景）
-- **示例**：`QueryFusionRetriever`（多查询 + RRF）、`BM25Retriever` 与向量检索融合
-- **要点**：为什么需要 BM25（专有名词、缩写、精确串）；RRF 是最省事的融合（按排名而非分数）；中文分词要接入 jieba 之类的分词器；**与 `newking` 的 `EnsembleRetriever` 逐条对照**
+- **示例**：`BM25Retriever` 与向量检索两路召回；`QueryFusionRetriever` 用 `num_queries=3` 让模型改写问题，再按 RRF 融合
+- **要点**：为什么需要 BM25（专有名词、缩写、精确串）；RRF 是最省事的融合（按排名而非分数）；中文没有空格，切词规则要显式给（`token_pattern`）；多路查询靠改写问题扩大召回面
 - **验收**：给一个「语义检索漏、关键词能中」的问题，融合后召回命中
 - **文档**：`/docs/examples/retrievers/reciprocal_rerank_fusion`、`/docs/module_guides/querying/retriever/retriever_modes`
 
@@ -50,7 +50,7 @@
 
 - **目标**：从「一段话」升级到「带出处的回答」
 - **示例**：`response_mode`（`compact` / `refine` / `tree_summarize`）+ 把 `source_nodes` 映射成 `[1][2]` 引用编号
-- **要点**：不同 response_mode 的取舍（成本 / 质量 / 是否会被截断）；回答里必须能指回原文块，否则不可审计；前端渲染引用 = 把 `source_nodes` 的 metadata 传出去（后面第 9 课接得上）
+- **要点**：不同 response_mode 的取舍（成本 / 质量 / 是否会被截断）；回答里必须能指回原文块，否则不可审计；前端渲染引用 = 把 `source_nodes` 的 metadata 传出去
 - **验收**：回答带 `[N]`，每个 `[N]` 能对应到具体文件的某一块
 - **文档**：`/docs/module_guides/querying/response_synthesizers`
 
@@ -70,15 +70,7 @@
 - **验收**：构造一个「一次检索不够」的问题，能看到第二次检索被触发
 - **文档**：`/docs/module_guides/workflow`
 
-### 第 9 课 · Agent 与工具化检索
-
-- **目标**：把检索器变成 agent 的一个工具，与既有编排对接
-- **示例**：`FunctionAgent` + `QueryEngineTool`；再把这个工具包成 LangGraph 节点，跑在 `lab-langgraph` 学过的图里
-- **要点**：检索作为工具的输入参数（`query`）由模型决定，比写死一条检索链更灵活；同时要防「该查不查」与「反复查」；这正是 `newking` 现在手写的那段（见 `newking/docs/工具调用待优化.md`）
-- **验收**：同一个问题在「固定检索链」与「agent 自主检索」下表现可对比
-- **文档**：`/docs/understanding/agent`、`/docs/module_guides/deploying/agents`
-
-### 第 10 课 · 评测：怎么证明检索变好了
+### 第 9 课 · 评测：怎么证明检索变好了
 
 - **目标**：没有评测就没有优化 —— 把「感觉更准」变成数字
 - **示例**：`RetrieverEvaluator`（hit rate / MRR）+ Faithfulness / Relevancy evaluator；准备 20 条问题 + 期望答案的评测集
@@ -88,18 +80,19 @@
 
 ---
 
-## 为什么是这 10 课
+## 为什么是这 9 课
 
 - **不铺「查询改写 / 路由」**：`RouterQueryEngine` 要有**多套索引**才有意义，本课程只有一套语料，讲不深就会退化成 API 演示；HyDE 在中文站内语料上收益不明显。
 - **抽取与入库合并**：两者是同一条 ETL 链（抽字段 → 切块 → 去重 → 落库），拆成两课会让同一段代码讲两遍。
-- **保留的部分各有独立验收**：过滤（集合可解释）与重排（顺序变化）是不同机制；Workflow（事件驱动）与 Agent（工具化检索）是两种编排；引用与评测是「能用 / 能证明」的落点。
+- **不单独开 Agent 课**：把检索器包成工具交给 `FunctionAgent` 是另一条编排路线，与「把检索做对」的主线关系弱；第 8 课末尾一句话点到为止，要深入时按官方 Agent 文档自学。
+- **保留的部分各有独立验收**：过滤（集合可解释）与重排（顺序变化）是不同机制；Workflow（事件驱动）是可维护的多步编排；引用与评测是「能用 / 能证明」的落点。
 
 ## 与面试的对应
 
 | 面试常问 | 落点 |
 |---|---|
 | RAG 怎么做、怎么优化 | 第 2–6 课（切块 / 检索 / 重排 / 合成） |
-| 关键词与语义怎么结合 | 第 5 课（BM25 + RRF） |
+| 关键词与语义怎么结合 | 第 5 课（BM25 + RRF + 多路查询） |
 | 索引怎么增量更新、怎么持久化 | 第 7 课（Pipeline + docstore + pgvector） |
-| 怎么评估 RAG 效果 | 第 10 课（hit rate / MRR / faithfulness） |
-| 什么时候用框架、什么时候自己写 | 贯穿全课，第 8–9 课集中对照 |
+| 怎么评估 RAG 效果 | 第 9 课（hit rate / MRR / faithfulness） |
+| 什么时候用框架、什么时候自己写 | 贯穿全课，第 8 课集中对照 |

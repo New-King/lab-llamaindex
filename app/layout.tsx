@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "LangGraph Lab",
-  description: "LangGraph 核心能力交互式学习",
+  title: "LlamaIndex Lab",
+  description: "LlamaIndex 检索工程化交互式学习",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

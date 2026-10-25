@@ -19,7 +19,7 @@
 | 向量库持久化（`PGVectorStore`） | 7 | 落地的分界线 |
 | 结构化抽取（Pydantic / `structured_predict`） | 7 | 非结构化 → 字段 |
 | Workflow（事件驱动 step） | 8 | 与 LangGraph 对照 |
-| Agent 与工具化检索（`FunctionAgent` / `QueryEngineTool`） | 9 | 与既有编排对接 |
+| Agent 与工具化检索（`FunctionAgent` / `QueryEngineTool`） | — | 与「把检索做对」主线关系弱；第 8 课末尾一句话点到，不单独开课 |
 | 评测（`RetrieverEvaluator` / Faithfulness / Relevancy） | 10 | 把「感觉更准」变成数字 |
 
 ## 二、进延伸阅读（不做主线）
@@ -44,7 +44,7 @@
 
 | 主题 | 本课 | 别的 lab |
 |---|---|---|
-| 图 / 状态 / 中断 / 记忆 | 只在第 9 课提「如何接进图」 | `lab-langgraph`（主线） |
-| Agent 循环与工具 | 第 9 课讲检索工具化 | `lab-langgraph` 第 4 课、`lab-deepagents` |
+| 图 / 状态 / 中断 / 记忆 | 本课程不涉及 | `lab-langgraph`（主线） |
+| Agent 循环与工具 | 不单独成课（第 8 课一句话点到） | `lab-langgraph` 第 4 课、`lab-deepagents` |
 | 前端聊天页 | 不重学 | `lab-langgraph` 第 11 课（同一套 `useStream`） |
 | 框架自带的 RAG 一条链 | 本课讲「手艺本身」 | `lab-mastra` 第 10 课讲「框架怎么给」 |

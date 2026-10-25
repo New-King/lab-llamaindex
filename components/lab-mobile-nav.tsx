@@ -46,7 +46,7 @@ export function LabMobileNav() {
       <header className="fixed inset-x-0 top-0 z-50 border-b border-border bg-sidebar lg:hidden">
         <div className="flex h-14 items-center justify-between px-4">
           <Link href="/" className="relative inline-block" onClick={() => setDrawerOpen(false)}>
-            <span className="block text-sm font-semibold">LangGraph Lab</span>
+            <span className="block text-sm font-semibold">LlamaIndex Lab</span>
             <span
               aria-hidden
               className={`absolute left-0 top-[calc(100%+2px)] h-0.5 w-full origin-left bg-foreground transition-transform duration-300 ease-out ${

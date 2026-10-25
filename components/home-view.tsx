@@ -64,7 +64,7 @@ export function HomeView() {
 
       <DocLinksSidebar
         links={HOME.docLinks}
-        description="深入概念与完整 API 请查阅 LangGraph 官方文档。"
+        description="深入概念与完整 API 请查阅 LlamaIndex 官方文档。"
       />
     </main>
   );

@@ -16,7 +16,7 @@ export function LabSidebar() {
         className="block border-b border-border px-4 py-4 transition-colors hover:bg-white/60"
       >
         <span className="relative inline-block">
-          <span className="block text-sm font-semibold">LangGraph Lab</span>
+          <span className="block text-sm font-semibold">LlamaIndex Lab</span>
           <span
             aria-hidden
             className={`absolute left-0 top-[calc(100%+2px)] h-0.5 w-full origin-left bg-foreground transition-transform duration-300 ease-out ${

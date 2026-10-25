@@ -11,7 +11,7 @@ LlamaIndex 课程（lab-llamaindex）的约定。改这个仓库前先读本文�
 
 ## 二、信息架构
 
-- **左侧菜单 = 主线课**，顺序见 `docs/curriculum.md`（10 课）。
+- **左侧菜单 = 主线课**，顺序见 `docs/curriculum.md`（9 课）。
 - 每课页 = 跟做步骤 + 知识点 + 文件 + 代码 + 右侧官方文档（`docLinks`），可选「延伸阅读」弹窗。
 - 每课有两个标题字段：`title`（页内 h1，完整、可带「：说明」）与 `menuTitle`（左侧菜单，短名）。**两个都必填**。
 - **验收写法**：2～3 行**陈述句** —— ① 怎么跑（哪条命令）；② 跑完能看到什么。不写问句、不写检查清单。
@@ -63,8 +63,7 @@ VectorStoreIndex.from_documents — 把一批 Document 切块、向量化、建�
 | 6 | — | `src/basic.py` |
 | 7 | `src/extract.py`、`src/ingest.py` | — |
 | 8 | `src/workflow.py` | — |
-| 9 | `src/agent.py` | — |
-| 10 | `src/eval.py` | — |
+| 9 | `src/eval.py` | — |
 
 禁止每课新建项目、新建平行目录；同一能力只在同一处演进。
 

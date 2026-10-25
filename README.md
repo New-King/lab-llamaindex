@@ -23,7 +23,7 @@ LlamaIndex 的课程站点，站点结构、UI 与数据文件形状照抄 `lab-
 
 1. LlamaIndex 的**功能与文档以 Python 为主线**，高级检索器 / Workflow / 评测都在 Python 侧
 2. 学员的真实项目（`newking`）后端本来就是 **Python + FastAPI + pgvector**，学完能直接对照改造，不是纸上谈兵
-3. 本课程不做网页：10 课全部靠脚本验证，能独立跑通就算过。需要网页时再把图交给 Agent Server，那属于另一条线
+3. 本课程不做网页：9 课全部靠脚本验证，能独立跑通就算过。需要网页时再把图交给 Agent Server，那属于另一条线
 
 ## 站点结构
 
@@ -57,8 +57,7 @@ lab-llamaindex/
 第 6 课  覆盖 basic.py：response_mode（compact / refine / tree_summarize）+ 引用编号（source_nodes → [N]）
 第 7 课  新建 src/extract.py（Pydantic + structured_predict）与 src/ingest.py（IngestionPipeline + docstore 去重 + pgvector）：先抽字段，再增量入库
 第 8 课  新建 src/workflow.py：LlamaIndex Workflow（事件驱动 step）—— 与 LangGraph 的图做结构对照
-第 9 课  新建 src/agent.py：FunctionAgent + QueryEngineTool（把检索器当工具）—— 与 LangGraph 的 agent 循环对照
-第 10 课 新建 src/eval.py：RetrieverEvaluator（hit rate / MRR）+ Faithfulness/Relevancy evaluator
+第 9 课  新建 src/eval.py：RetrieverEvaluator（hit rate / MRR）+ Faithfulness/Relevancy evaluator
 ```
 
 ## 技术栈
@@ -80,8 +79,8 @@ pnpm dev          # 站点
 
 **实测结论（llama-index-core 0.14.25 + deepseek-flash + bge-large-zh-v1.5，2026-10-24）**
 
-- 第 1–6、8–10 课在本机跑通（`.env.local` 用真实 key）；第 7 课 pgvector 落库部分**未验证**：本机无 Docker / Postgres，只有 `extract.py` 与流水线逻辑用内存向量库替身验证过。
-- `deepseek-flash` 是思考型模型：**默认不开 function calling**（`is_function_calling_model=False`），结构化输出走提示词解析；第 9 课的 `FunctionAgent` 必须显式打开，否则报 `LLM must be a FunctionCallingLLM`。打开后 `as_structured_llm` 会走工具调用路径，DeepSeek 会拒绝（`Thinking mode does not support this tool_choice`），所以两课不能共用同一个开关。
+- 第 1–6、8、9 课在本机跑通（`.env.local` 用真实 key）；第 7 课 pgvector 落库部分**未验证**：本机无 Docker / Postgres，只有 `extract.py` 与流水线逻辑用内存向量库替身验证过。
+- `deepseek-flash` 是思考型模型：**默认不开 function calling**（`is_function_calling_model=False`），结构化输出走提示词解析；要用 `FunctionAgent`（本课程未单独开课）时必须显式打开，否则报 `LLM must be a FunctionCallingLLM`。打开后 `as_structured_llm` 会走工具调用路径，DeepSeek 会拒绝（`Thinking mode does not support this tool_choice`），所以两课不能共用同一个开关。
 - 嵌入模型 `bge-large-zh-v1.5` 输入上限 512 token，**块长 512 会被硅基流动直接拒**（400 / code 20015，实测）。课程统一 `chunk_size=256`。
 - `SimpleDirectoryReader` 的 `recursive` 默认 `False`，语料在子目录时必须显式开；文档 id 默认随机，增量入库必须 `filename_as_id=True`。
 - `Document.hash` 含 metadata，**入库前把抽取字段原地写进 metadata 会让去重永远失效**；抽取要作为 `IngestionPipeline` 的一步、返回新文档。
