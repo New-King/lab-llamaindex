@@ -1175,12 +1175,10 @@ from llama_index.core.node_parser import MarkdownNodeParser, SentenceSplitter
 from llama_index.core.storage.docstore import SimpleDocumentStore
 from llama_index.vector_stores.postgres import PGVectorStore
 
-# ① load_documents() 读语料 → list[Document]（正文 + frontmatter 元数据）
+# ① 读语料
 documents = load_documents()
 
-# ② SimpleDocumentStore 当账本：记「文档 id → 内容指纹」，重跑时靠它找出改过的
-#    get_document_hash 取上次的指纹，set_document_hash 写回新的指纹
-#    Path：文件路径对象；from_persist_path：从上次落盘的 docstore.json 恢复（没有该文件就是全新的一份）
+# ② 指纹账本：判断哪些文档改过
 docstore_path = Path(".storage/docstore.json")
 docstore_path.parent.mkdir(exist_ok=True)
 docstore = (
@@ -1189,13 +1187,11 @@ docstore = (
     else SimpleDocumentStore()
 )
 
-# ③ 只挑出新文档和改过的文档 → 指纹没变的不再切块、不再调模型
+# ③ 只处理新文档和改过的文档
 changed = [doc for doc in documents if docstore.get_document_hash(doc.doc_id) != doc.hash]
 print("本次需要处理文档数：", len(changed))
 
-# ④ PGVectorStore 落 Postgres → 向量库（跨进程仍在，表结构由适配器自己建）
-#    from_params：用连接串、表名、向量维度造出来
-#    连接串要写清驱动：同步用 psycopg2、异步用 asyncpg，两个都得给，否则解析端口时报错
+# ④ 初始化向量库（只建对象，不写数据）
 db_url = os.environ["DATABASE_URL"]
 vector_store = PGVectorStore.from_params(
     connection_string=db_url.replace("postgresql://", "postgresql+psycopg2://"),
@@ -1204,15 +1200,12 @@ vector_store = PGVectorStore.from_params(
     embed_dim=1024,
 )
 
-# ⑤ 改过的文档先删掉旧块 → 流水线只加不删，不先删就会在库里堆两份
-#    vector_store.delete(doc_id)：按文档 id 把它名下的块全删掉
+# ⑤ 改过的先删旧块，否则库里两份
 for doc in changed:
     if docstore.get_document_hash(doc.doc_id):
         vector_store.delete(doc.doc_id)
 
-# ⑥ IngestionPipeline：抽字段 → 分节 → 切块 → 向量化
-#    MarkdownNodeParser 按标题分节、SentenceSplitter 节内切块
-#    Settings.embed_model 必须列进去：没有向量的节点不会被写进向量库，会静默丢掉
+# ⑥ 流水线：抽字段 → 分节 → 切块 → 算向量
 pipeline = IngestionPipeline(
     transformations=[
         FieldExtractor(),
@@ -1223,17 +1216,16 @@ pipeline = IngestionPipeline(
     vector_store=vector_store,
 )
 
-# ⑦ run 只处理挑出来的文档 → list[TextNode]（本次真正入库的块）
+# ⑦ 跑流水线入库
 nodes = pipeline.run(documents=changed)
 print("本次处理块数：", len(nodes))
 
-# ⑧ 账本更新并落盘 → .storage/docstore.json（下次靠它判断哪些文档没变）
+# ⑧ 指纹写回账本
 for doc in changed:
     docstore.set_document_hash(doc.doc_id, doc.hash)
 docstore.persist(str(docstore_path))
 
-# ⑨ from_vector_store 直接从向量库拿索引 → as_query_engine().query 问一次
-#    不依赖本次处理的节点：重跑时 nodes 为 0，照样能查到已经入库的内容
+# ⑨ 从库建索引，问一次
 index = VectorStoreIndex.from_vector_store(vector_store)
 print("已落库，提问：", index.as_query_engine().query("切块粒度怎么定"))
 `,
@@ -1264,19 +1256,23 @@ print("已落库，提问：", index.as_query_engine().query("切块粒度怎么
     title: "Workflow：把检索流程写成事件驱动的步骤",
     menuTitle: "Workflow",
     summary:
-      "一次检索不够时，流程会变成「检索 → 判断 → 再检索 → 合成」。这一课用事件驱动的 Workflow 写这条流程：每一步接收一种事件、抛出另一种事件，脚本会把走过哪几步打出来。（把检索器包成工具交给 `FunctionAgent`，就是「模型自己决定查不查」的 agent 形态，属于另一条路，本课不展开。）",
+      "一次检索不够时，流程会变成「检索 → 判断 → 再检索 → 合成」。这一课用事件驱动的 Workflow 写这条流程：分数不够就发一个重试事件回到同一个步骤，让模型把问题换个说法再查一次，脚本会把走过哪几步和改写后的新问法打出来。（把检索器包成工具交给 `FunctionAgent`，就是「模型自己决定查不查」的 agent 形态，属于另一条路，本课不展开。）",
     verify: {
       label: "跑脚本看结果",
       description: [
         "在 my-llamaindex-app 目录执行 uv run python -m src.workflow",
-        "依次打印「① 第一次检索：最高分 0.xx」→（分数不到 0.7 时）「→ 不够用，发一个 Retry 事件」→「② 第二次检索」→「③ 合成回答」→「最终回答：…」",
+        "依次打印「第 1 次检索：最高分 0.xx」→（不到 0.7 时）「→ 改写为：…」（模型给出的新问法）→「第 2 次检索」→「③ 合成回答」→「最终回答：…」",
       ],
     },
     concepts: [
+      { text: "`Event` — 自定义事件的基类，字段就是它在步骤间携带的数据" },
       { text: "`Workflow` — 事件驱动的流程容器，负责在步骤之间派发事件" },
       { text: "`step` — 一个处理步骤：接收某类事件，产出新事件" },
       { text: "`StartEvent` — 流程的起点事件，携带初始输入" },
       { text: "`StopEvent` — 流程的终点事件，携带最终结果" },
+      { text: "`get_response_synthesizer` — 造合成器，只把节点写成答案，不负责检索" },
+      { text: "`synthesize` — 传入问题与节点直接生成回答，不重新检索" },
+      { text: "`acomplete` — 异步调用模型拿文本，本课用来改写问题" },
     ],
     files: [
       {
@@ -1287,74 +1283,66 @@ print("已落库，提问：", index.as_query_engine().query("切块粒度怎么
         code: `import asyncio
 
 from src.settings import load_documents  # 导入即完成模型与嵌入配置
-from llama_index.core import VectorStoreIndex, get_response_synthesizer
+from llama_index.core import Settings, VectorStoreIndex, get_response_synthesizer
 from llama_index.core.node_parser import MarkdownNodeParser, SentenceSplitter
 from llama_index.core.schema import NodeWithScore
-from llama_index.core.workflow import (
-    Event,
-    StartEvent,
-    StopEvent,
-    Workflow,
-    step,
-)
+from llama_index.core.workflow import Event, StartEvent, StopEvent, Workflow, step
 
-# ① load_documents() 读语料 → list[Document]（整篇，没切）
+# ① 读语料
 documents = load_documents()
 
-# ② MarkdownNodeParser 按标题分节（get_nodes_from_documents 执行）→ list[TextNode]，一节一个，只分组、不限长度
+# ② MarkdownNodeParser 按标题分节（get_nodes_from_documents 执行）
 sections = MarkdownNodeParser().get_nodes_from_documents(documents)
 
-# ③ SentenceSplitter 节内按句子切（get_nodes_from_documents 执行）→ list[TextNode]，单块 ≤256 token（先扣掉 metadata 的 token）
+# ③ SentenceSplitter 节内切块
 nodes = SentenceSplitter(chunk_size=256, chunk_overlap=32).get_nodes_from_documents(sections)
 
-# ④ VectorStoreIndex 向量化 + 入库 → Index（块文本到此固定）
+# ④ VectorStoreIndex 建索引
 index = VectorStoreIndex(nodes)
 
-# ⑤ as_retriever 造检索器 → retrieve 执行检索 → list[NodeWithScore]（流程里两次检索都用它）
+# ⑤ as_retriever 造检索器，retrieve 执行检索（流程里可能查两次）
 retriever = index.as_retriever(similarity_top_k=4)
 
-# get_response_synthesizer：造一个合成器，只把已经检索到的块写成答案；检索归图里的步骤管，不在这里重跑
+# ⑥ 合成器：只把检索到的块写成答案，不再检索
 synthesizer = get_response_synthesizer()
 
-# ⑥ 定义事件 Retrieved / Retry（@step 返回它 = 抛出这个事件）
+# ⑦ 两种事件：检索完成 / 需要重试（带第几次）
+#    事件类只是数据容器，谁处理它由 step 的参数类型注解决定，跟类名无关
 class Retrieved(Event):
-    """检索完成事件：带上命中的块。"""
     question: str
     hits: list[NodeWithScore]
 
 class Retry(Event):
-    """需要再检索一次：带上改写过的问题。"""
     question: str
+    attempt: int
 
-# RagFlow：整条流程。每个 @step 方法接收一种事件、返回（抛出）另一种；方法名就是步骤名
-# 三步：first_retrieve（先查一次）→ retry_retrieve（分数不够再查）→ synthesize（合成）
+# ⑧ 按 step 执行：ev 的类型声明它接收哪种事件
+#    返回什么事件，就交给声明接收它的 step；所以返回 Retry 会回到 retrieve 自己
 class RagFlow(Workflow):
     @step
-    async def first_retrieve(self, ev: StartEvent) -> Retrieved | Retry:
+    async def retrieve(self, ev: StartEvent | Retry) -> Retrieved | Retry:
+        attempt = ev.attempt if isinstance(ev, Retry) else 1
         hits = retriever.retrieve(ev.question)
         best = max((h.score or 0) for h in hits)
-        print(f"① 第一次检索：最高分 {best:.2f}")
-        # 分数太低就改写问题再来一轮
-        if best < 0.7:
-            print("   → 不够用，发一个 Retry 事件")
-            return Retry(question=f"{ev.question}（换个说法再查一次）")
-        return Retrieved(question=ev.question, hits=hits)
-
-    @step
-    async def retry_retrieve(self, ev: Retry) -> Retrieved:
-        hits = retriever.retrieve(ev.question)
-        print(f"② 第二次检索：最高分 {max((h.score or 0) for h in hits):.2f}")
+        print(f"第 {attempt} 次检索：最高分 {best:.2f}")
+        # 分数不够且还没到第 2 次 → 让模型换个问法，再回到本 step
+        if best < 0.7 and attempt < 2:
+            rewritten = (
+                await Settings.llm.acomplete(f"把下面的问题换个说法，只输出新问题本身：{ev.question}")
+            ).text.strip()
+            print(f"   → 改写为：{rewritten}")
+            return Retry(question=rewritten, attempt=attempt + 1)
         return Retrieved(question=ev.question, hits=hits)
 
     @step
     async def synthesize(self, ev: Retrieved) -> StopEvent:
         print("③ 合成回答")
-        # synthesize：把前面检索到的 hits 直接交给合成器写答案，不再检索一遍
         return StopEvent(result=synthesizer.synthesize(ev.question, nodes=ev.hits))
 
+
 async def main():
-    # Workflow.run 要在事件循环里调用，所以套一层 async main 再交给 asyncio.run
-    flow = RagFlow(timeout=60)
+    # run 只抛 StartEvent，之后全按事件类型派发；它是 async，所以套一层 async main
+    flow = RagFlow(timeout=120)
     print("最终回答：", await flow.run(question="HNSW 索引在生产里怎么调"))
 
 asyncio.run(main())
