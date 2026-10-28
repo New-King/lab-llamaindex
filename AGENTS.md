@@ -65,7 +65,7 @@ VectorStoreIndex.from_documents — 把一批 Document 切块、向量化、建�
 | 6 | — | `src/basic.py` |
 | 7 | `src/extract.py`、`src/ingest.py` | — |
 | 8 | `src/workflow.py` | — |
-| 9 | `src/eval.py` | — |
+| 9 | `src/eval_questions.json`、`src/eval.py` | — |
 
 禁止每课新建项目、新建平行目录；同一能力只在同一处演进。
 

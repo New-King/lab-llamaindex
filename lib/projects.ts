@@ -1366,80 +1366,148 @@ asyncio.run(main())
     title: "评测：怎么证明检索真的变好了",
     menuTitle: "评测",
     summary:
-      "没有评测就没有优化。这一课给一条问题标上「应该命中哪两块」，算出检索指标（MRR / Hit Rate）与生成指标（忠实度 / 相关性），把「感觉更准」变成能对比的数字。",
+      "没有评测就没有优化。这一课先建一个 5 条的评测集（可答 3 条 + 应拒答 2 条），再批量跑出检索指标（hit_rate / mrr）、生成指标（忠实度 / 相关性）和拒答率，把「感觉更准」变成一张能对比的表。",
     verify: {
       label: "跑脚本看结果",
       description: [
         "在 my-llamaindex-app 目录执行 uv run python -m src.eval",
-        "先看到「检索指标: {'mrr': 0.5, 'hit_rate': 1.0}」——期望的两块有一块进了前 4，但排在第二位，所以 mrr 记 0.5；再看到「忠实度: 1.0 相关性: 1.0」",
-        "把 similarity_top_k 改成 1 重跑：两个检索指标都变 0.0——正确块根本没进候选，评测直接把「召回没中」暴露出来",
+        "先逐条打印 3 条可答问题的 {'hit_rate': 1.0, 'mrr': 1.0}，再打印 2 条应拒答题的「已拒答」，最后汇总为 hit_rate 1.0 / mrr 1.0 / 忠实度 1.0 / 相关性 1.0 / 拒答 2/2",
+        "给检索器加上 filters=MetadataFilters(filters=[MetadataFilter(key=\"type\", value=\"notes\")]) 再跑：q2 变成 hit_rate 0、mrr 0，汇总掉到 0.667——博客里的 HNSW 被过滤掉了，评测立刻抓到",
       ],
     },
     concepts: [
-      { text: "`RetrieverEvaluator` — 用标注好的问题与期望文档算检索指标" },
+      { text: "`RetrieverEvaluator` — 用标注好的问题与期望节点算检索指标" },
+      { text: "`from_metric_names` — 用字符串清单挑指标：hit_rate / mrr / precision / recall" },
+      { text: "`aevaluate` — 单条检索评测，返回每条指标的分数" },
+      { text: "`BatchEvalRunner` — 打包多个评估器，一次并发跑完一批问题" },
+      { text: "`aevaluate_queries` — 批量跑查询引擎并逐条打分" },
       { text: "`FaithfulnessEvaluator` — 检查回答是否只用了检索到的内容" },
       { text: "`RelevancyEvaluator` — 检查检索到的内容是否真的与问题相关" },
-      { text: "`aevaluate` — 异步跑一条评测，返回各项指标" },
     ],
     files: [
       {
-        path: "src/eval.py",
+        path: "src/eval_questions.json",
         order: 1,
         action: "create",
-        hint: "评测脚本：给一条问题标上期望命中的块 → 算检索指标 → 再算生成指标。",
+        hint: "评测集：每条问题标注该命中哪些文件，以及是不是「语料里没有、应该拒答」的题。",
+        code: `[
+  {
+    "id": "q1",
+    "query": "切块粒度为什么会影响检索质量",
+    "expected_files": ["chunking.md"],
+    "should_refuse": false
+  },
+  {
+    "id": "q2",
+    "query": "HNSW 的 m 和 ef_construction 怎么调",
+    "expected_files": ["pgvector-hnsw.md"],
+    "should_refuse": false
+  },
+  {
+    "id": "q3",
+    "query": "召回和重排各自负责什么",
+    "expected_files": ["rerank.md"],
+    "should_refuse": false
+  },
+  {
+    "id": "q4",
+    "query": "Turso 的免费额度是多少",
+    "expected_files": [],
+    "should_refuse": true
+  },
+  {
+    "id": "q5",
+    "query": "明天上海会下雨吗",
+    "expected_files": [],
+    "should_refuse": true
+  }
+]
+`,
+      },
+      {
+        path: "src/eval.py",
+        order: 2,
+        action: "create",
+        hint: "评测脚本：读评测集 → 逐条算检索指标 → 批量算生成指标 → 跑应拒答题 → 打一张汇总表。",
         code: `import asyncio
+import json
+from pathlib import Path
 
 from src.settings import load_documents  # 导入即完成模型与嵌入配置
 from llama_index.core import VectorStoreIndex
 from llama_index.core.evaluation import (
+    BatchEvalRunner,
     FaithfulnessEvaluator,
     RelevancyEvaluator,
     RetrieverEvaluator,
 )
 from llama_index.core.node_parser import MarkdownNodeParser, SentenceSplitter
 
-# ① load_documents() 读语料 → list[Document]（整篇，没切）
+# ① 读语料、按标题分节、节内切块
 documents = load_documents()
-
-# ② MarkdownNodeParser 按标题分节（get_nodes_from_documents 执行）→ list[TextNode]，一节一个，只分组、不限长度
 sections = MarkdownNodeParser().get_nodes_from_documents(documents)
-
-# ③ SentenceSplitter 节内按句子切（get_nodes_from_documents 执行）→ list[TextNode]，单块 ≤256 token（先扣掉 metadata 的 token）
 nodes = SentenceSplitter(chunk_size=256, chunk_overlap=32).get_nodes_from_documents(sections)
 
-# ④ VectorStoreIndex 向量化 + 入库 → Index（块文本到此固定）
+# ② 建索引，造检索器与查询引擎（top_k 两边一致，比较才有意义）
 index = VectorStoreIndex(nodes)
-
-# ⑤ as_retriever 造检索器 → retrieve 执行检索 → list[NodeWithScore]（评测就是给它出题）
 retriever = index.as_retriever(similarity_top_k=4)
+query_engine = index.as_query_engine(similarity_top_k=4)
 
-# ⑥ 手标期望命中的节点 → list[str]（这个问题该命中讲切块那篇的头两块）
-expected_ids = [n.node_id for n in nodes if n.metadata.get("file_name") == "chunking.md"][:2]
-
-# ⑦ RetrieverEvaluator.from_metric_names 造评测器（hit rate 看有没有命中，mrr 看命中位置靠不靠前）
-#    指标名要写成 ["mrr", "hit_rate"]
-evaluator = RetrieverEvaluator.from_metric_names(
-    ["mrr", "hit_rate"], retriever=retriever
+# ③ 读评测集：query / expected_files / should_refuse
+questions = json.loads(
+    (Path(__file__).parent / "eval_questions.json").read_text(encoding="utf-8")
 )
 
+# ④ 评测集里写的是文件名，这里换算成块 id，评测器才认
+#    结果形如 {"chunking.md": ["6941a4…", "5daf85…"]}，类型是 dict[str, list[str]]
+ids_by_file = {}
+for n in nodes:
+    ids_by_file.setdefault(n.metadata.get("file_name"), []).append(n.node_id)
+
+# ⑤ 检索评测器：hit_rate 看有没有命中，mrr 看命中的块排得靠不靠前
+retriever_evaluator = RetrieverEvaluator.from_metric_names(
+    ["hit_rate", "mrr"], retriever=retriever
+)
+
+
 async def main():
-    result = await evaluator.aevaluate(
-        query="切块粒度为什么会影响检索质量",
-        expected_ids=expected_ids,
-    )
-    print("检索指标：", result.metric_vals_dict)
+    # ⑥ 检索评测：逐条跑，收集每条分数（当前版本没有批量接口）
+    answerable = [q for q in questions if q["expected_files"]]
+    per_question = []
+    for q in answerable:
+        expected = [i for f in q["expected_files"] for i in ids_by_file.get(f, [])]
+        result = await retriever_evaluator.aevaluate(query=q["query"], expected_ids=expected)
+        per_question.append(result.metric_vals_dict)
+        print(f"{q['id']} {q['query']} → {result.metric_vals_dict}")
 
-    # ⑧ FaithfulnessEvaluator + RelevancyEvaluator 打生成分（回答是否忠实、检索是否切题）
-    #    as_query_engine().query()：先造查询引擎再问一次，拿到待评测的回答
-    #    aevaluate_response：对一条已有回答打分，返回对象里 .score 是 0 或 1
-    response = index.as_query_engine().query("切块粒度为什么会影响检索质量")
-    faithful = await FaithfulnessEvaluator().aevaluate_response(response=response)
-    relevant = await RelevancyEvaluator().aevaluate_response(
-        query="切块粒度为什么会影响检索质量", response=response
+    # ⑦ 生成评测：BatchEvalRunner 一次跑完所有可答问题（并发 4）
+    runner = BatchEvalRunner(
+        {"faithfulness": FaithfulnessEvaluator(), "relevancy": RelevancyEvaluator()},
+        workers=4,
     )
-    print("忠实度：", faithful.score, "相关性：", relevant.score)
+    gen = await runner.aevaluate_queries(
+        query_engine, queries=[q["query"] for q in answerable]
+    )
 
-# asyncio.run：aevaluate / aevaluate_response 都是异步的，用它在脚本里跑起来
+    # ⑧ 应拒答题：语料里没有，看回答有没有拒答
+    refusals = [q for q in questions if q["should_refuse"]]
+    refused = 0
+    for q in refusals:
+        answer = str(query_engine.query(q["query"]))
+        hit = any(w in answer for w in ("没有", "不知道", "无法", "未提及", "不包含"))
+        refused += hit
+        print(f"{q['id']} {q['query']} → {'已拒答' if hit else '未拒答：' + answer[:40]}")
+
+    # ⑨ 汇总：多条样本取平均，单条分数没有统计意义
+    avg = lambda vals: round(sum(vals) / len(vals), 3) if vals else 0.0
+    print("\\n=== 汇总 ===")
+    print("检索 hit_rate:", avg([r["hit_rate"] for r in per_question]))
+    print("检索 mrr:", avg([r["mrr"] for r in per_question]))
+    print("忠实度:", avg([r.score for r in gen["faithfulness"]]))
+    print("相关性:", avg([r.score for r in gen["relevancy"]]))
+    print(f"拒答: {refused}/{len(refusals)}")
+
+
 asyncio.run(main())
 `,
       },

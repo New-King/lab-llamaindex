@@ -72,10 +72,10 @@
 
 ### 第 9 课 · 评测：怎么证明检索变好了
 
-- **目标**：没有评测就没有优化 —— 把「感觉更准」变成数字
-- **示例**：`RetrieverEvaluator.from_metric_names(["mrr", "hit_rate"])` + `FaithfulnessEvaluator` / `RelevancyEvaluator`；用一条标注问题跑通「检索指标 + 生成指标」，改 `similarity_top_k` 看指标变化
-- **要点**：评测集要覆盖「事实型 / 汇总型 / 应该拒答型」；检索指标与生成指标分开看（召回没中，别怪模型）；每次改切块/重排/融合都跑一遍，否则改不动
-- **验收**：跑出 `{'mrr': 0.5, 'hit_rate': 1.0}` 与 `忠实度 1.0 / 相关性 1.0`；把 `similarity_top_k` 改成 1 重跑，检索指标归零
+- **目标**：没有评测就没有优化 —— 把「感觉更准」变成一张能对比的表
+- **示例**：`src/eval_questions.json` 存 5 条评测样本（可答 3 条 + 应拒答 2 条）；`RetrieverEvaluator.from_metric_names(["hit_rate", "mrr"])` 逐条算检索指标；`BatchEvalRunner` + `aevaluate_queries` 批量算忠实度与相关性；应拒答题单独检查；最后打一张汇总表
+- **要点**：评测集要覆盖「事实型 / 汇总型 / 应该拒答型」；检索指标与生成指标分开看（召回没中，别怪模型）；单条样本的分数没有统计意义，要看平均值；每次改切块/重排/融合都跑一遍，否则改不动；当前版本没有 `aevaluate_dataset`，检索侧要自己循环
+- **验收**：跑出 5 条结果与汇总 `hit_rate 1.0 / mrr 1.0 / 忠实度 1.0 / 相关性 1.0 / 拒答 2/2`；给检索器加 `type=notes` 过滤重跑，q2 掉成 0、汇总掉到 0.667
 - **文档**：`/docs/module_guides/evaluating`、`/docs/optimizing/evaluation`
 
 ---

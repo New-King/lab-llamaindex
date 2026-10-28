@@ -57,7 +57,7 @@ lab-llamaindex/
 第 6 课  覆盖 basic.py：response_mode（compact / refine / tree_summarize）+ 引用编号（source_nodes → [N]）
 第 7 课  新建 src/extract.py（Pydantic + structured_predict）与 src/ingest.py（IngestionPipeline + docstore 去重 + pgvector）：先抽字段，再增量入库
 第 8 课  新建 src/workflow.py：LlamaIndex Workflow（事件驱动 step）—— 与 LangGraph 的图做结构对照
-第 9 课  新建 src/eval.py：RetrieverEvaluator（hit rate / MRR）+ Faithfulness/Relevancy evaluator
+第 9 课  新建 src/eval_questions.json + src/eval.py：5 条评测样本（含应拒答），RetrieverEvaluator（hit rate / MRR）+ BatchEvalRunner（忠实度 / 相关性）+ 汇总表
 ```
 
 ## 技术栈
